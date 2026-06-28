@@ -17,6 +17,9 @@ inputs:
     description: "Token used to post the comment (only needed for mode=post)"
     required: false
     default: ${{ github.token }}
+  groq-api-key:
+    description: "Groq API key used for LLM reasoning"
+    required: true
 
 runs:
   using: "composite"
@@ -31,8 +34,8 @@ runs:
         SENTINEL_MODE: ${{ inputs.mode }}
         SENTINEL_PR_FILE: ${{ inputs.pr-file }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        GROQ_API_KEY: ${{ inputs.groq-api-key }}
       run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
 
-# NOTE: detection needs a local Ollama (LLM + embeddings). Use a self-hosted runner
-# with `ollama serve` + the models pulled, OR point the env at an API LLM provider.
-# GitHub-hosted runners have no Ollama.
+# NOTE: detection uses Groq for reasoning and local Ollama for embeddings. Use a
+# self-hosted runner with `ollama serve` and `nomic-embed-text` pulled.

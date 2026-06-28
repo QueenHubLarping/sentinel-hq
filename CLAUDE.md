@@ -12,12 +12,11 @@ Hackathon: Cognee "Hangover Part AI" (Jun 29 – Jul 5 2026). Track: **Best Use 
 5. **User Experience** — intuitive, polished, adoptable.
 6. **Presentation Quality** — demo, README, and submission communicate problem → solution → impact.
 
-## Setup (100% local — self-hosted Cognee + Ollama, no Cloud, no API key)
+## Setup (self-hosted Cognee + Groq LLM + local Ollama embeddings)
 
 ```bash
-# 1. Ollama (the local LLM runtime — everything runs on this laptop)
+# 1. Ollama (local embedding runtime)
 ollama serve
-ollama pull llama3.2            # reasoning LLM
 ollama pull nomic-embed-text    # embeddings
 
 # 2. Python env (use 3.10–3.12; cognee needs >=3.10)
@@ -26,7 +25,7 @@ source .venv/bin/activate       # macOS/Linux
 # .venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 
-# 3. Config (no secrets — just points Cognee at local Ollama)
+# 3. Config (set GROQ_API_KEY in the ignored .env file)
 cp .env.template .env
 
 # 4. Run the Day 1 spike
@@ -37,7 +36,7 @@ python scripts/day1_spike.py
 
 ```
 sentinel/
-  connection.py     — local Ollama bootstrap; setup_cognee() applies config + checks Ollama
+  connection.py     — Groq/Ollama bootstrap; applies config + checks local embeddings
   ingest.py         — remember phase: cognee.add() + cognee.cognify() over the corpus
 corpus/
   adrs/             — Architecture Decision Records (markdown)
@@ -49,11 +48,10 @@ scripts/
 
 ## Architecture decisions
 
-- **Local self-hosted Cognee + Ollama — no Cloud, no external API.** LLM (`llama3.2`)
-  and embeddings (`nomic-embed-text`) both run on local Ollama. Graph (Kuzu), vector
-  (LanceDB), and relational (SQLite) stores are all local files. This is the
-  Best-Use-of-Open-Source track; Cognee Cloud is also waitlisted, so local is the only
-  path. Config is env-driven (`.env`), applied in `sentinel/connection.py`.
+- **Self-hosted Cognee with Groq reasoning and local embeddings.** The LLM
+  (`llama-3.3-70b-versatile`) runs through Groq; embeddings (`nomic-embed-text`) run
+  on local Ollama. Graph (Kuzu), vector (LanceDB), and relational (SQLite) stores are
+  local files. Config is env-driven (`.env`), applied in `sentinel/connection.py`.
 - **Single-user/local posture** — `ENABLE_BACKEND_ACCESS_CONTROL=false` (set before
   `import cognee`) disables multi-tenant auth so scripts run without a user/session.
 - **remember = add() + cognify()** — each ADR/PR/Slack doc is added separately and

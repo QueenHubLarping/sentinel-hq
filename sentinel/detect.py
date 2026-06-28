@@ -27,8 +27,12 @@ class Verdict(BaseModel):
     """
 
     analysis: str = Field(
-        description="Step-by-step: (1) what decision is in the MEMORY CONTEXT and why, "
-        "(2) what the PR changes, (3) does the PR undo that decision? Reason here first."
+        description="Reason here FIRST, in this exact order: "
+        "(1) PR EFFECT — in the diff, '-' lines are REMOVED and '+' lines are ADDED; state "
+        "plainly what the PR removes and what it adds (e.g. 'removes async Celery dispatch, "
+        "adds synchronous SMTP call'). "
+        "(2) DECISION — what the MEMORY CONTEXT decided and why. "
+        "(3) CONFLICT — does the PR's effect undo the decision?"
     )
     reverses_decision: bool = Field(
         description="True only if the PR contradicts/undoes a decision present in the MEMORY CONTEXT."
@@ -54,6 +58,10 @@ _SYSTEM_PROMPT = """You are Sentinel, an institutional-memory guardian for a cod
 You are given an incoming pull request and MEMORY CONTEXT containing the team's past
 engineering decisions and the reasoning behind them. Decide whether the PR REVERSES or
 CONTRADICTS a past decision found in the MEMORY CONTEXT.
+
+Reading the diff correctly is critical: lines starting with '-' are REMOVED by the PR,
+lines starting with '+' are ADDED. The PR's net effect = it deletes the '-' code and
+introduces the '+' code. Do not confuse the PR's change with the existing decision.
 
 You MUST fill EVERY field, taking content only from the MEMORY CONTEXT (never invent):
 - reverses_decision: true if the PR undoes/contradicts a decision in the context; else false.
