@@ -1,1 +1,30 @@
-.env*
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local secrets / config — keep the template tracked
+.env
+.env.*
+!.env.template
+
+# Cognee local data stores (self-hosted graph + vector + relational)
+.data_storage/
+.cognee_cache/
+.cognee_system/
+.cognee/
