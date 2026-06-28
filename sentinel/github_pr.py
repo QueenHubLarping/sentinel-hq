@@ -81,7 +81,9 @@ def find_flagged_decision_text(number: int) -> str:
     comments = _api(f"/repos/{repo}/issues/{number}/comments?per_page=100") or []
     for c in reversed(comments):
         body = c.get("body", "")
-        if "reverses a past decision" in body:
+        # Matches both the old ("reverses a past decision") and new ("reverses a past
+        # engineering decision") reversal-comment headlines.
+        if "reverses a past" in body:
             return body
     return ""
 
