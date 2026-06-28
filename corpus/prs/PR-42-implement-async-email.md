@@ -31,3 +31,8 @@ handles SMTP dispatch with exponential backoff (3 retries, max 60s delay).
 ## Implements
 
 ADR-001: Use Asynchronous Email Dispatch via Queue
+
+## Cross-References
+- implements: ADR-001-async-email.md
+- discussed_in: slack-2024-08-email-decision.md
+- component: email_service

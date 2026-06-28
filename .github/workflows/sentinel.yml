@@ -1,10 +1,13 @@
 # Example workflow: run Sentinel on every PR.
 #
-# Detection needs a local Ollama (LLM + embeddings), so this uses a SELF-HOSTED runner
-# with `ollama serve` running and the models pulled:
-#   ollama pull qwen2.5:3b && ollama pull nomic-embed-text
-# Start dry-run (comments only printed to the job summary); switch mode to "post"
-# once you're happy, to have Sentinel comment on the PR.
+# Sentinel uses Groq for reasoning (remote) and local Ollama for embeddings.
+# This requires a SELF-HOSTED runner with Ollama running and models pulled:
+#   ollama pull nomic-embed-text
+#
+# Add GROQ_API_KEY to your repo's Actions secrets (Settings → Secrets → Actions).
+#
+# Start in dry-run mode (comment printed to the job summary only). Switch to
+# mode: post once you're happy, to have Sentinel comment on the PR.
 
 name: Sentinel
 
@@ -25,3 +28,4 @@ jobs:
         uses: ./
         with:
           mode: dry-run     # change to "post" to comment on the PR
+          groq-api-key: ${{ secrets.GROQ_API_KEY }}

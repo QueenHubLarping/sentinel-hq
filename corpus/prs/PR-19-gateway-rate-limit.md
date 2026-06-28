@@ -38,3 +38,8 @@ code is explicitly out-of-scope per ADR-003. Do not re-add them.
 ## Implements
 
 ADR-003: Enforce Rate Limiting at the API Gateway, Not in Application Code
+
+## Cross-References
+- implements: ADR-003-gateway-rate-limiting.md
+- discussed_in: slack-2024-03-rate-limiting.md
+- component: api_gateway

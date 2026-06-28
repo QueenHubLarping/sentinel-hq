@@ -103,6 +103,14 @@ async def _recall_context(pr_text: str) -> str:
     return (" ".join(str(r) for r in answer) if answer else "") + "\n\n" + str(raw)
 
 
+def _normalize_confidence(c: float) -> float:
+    """Normalize an LLM-emitted confidence value to [0.0, 1.0].
+
+    Some models emit 85 instead of 0.85; divide by 100 when the value exceeds 1.
+    """
+    return max(0.0, min(1.0, c / 100.0 if c > 1.0 else c))
+
+
 async def detect_reversal(pr_text: str, retrieval_query: str | None = None) -> Verdict:
     """Run the recall→judge loop on an incoming PR and return a structured Verdict."""
     from cognee.infrastructure.llm.LLMGateway import LLMGateway
@@ -121,13 +129,11 @@ async def detect_reversal(pr_text: str, retrieval_query: str | None = None) -> V
         response_model=Verdict,
     )
 
-    # Normalize confidence to [0,1] — small models sometimes emit 85 instead of 0.85.
-    c = verdict.confidence
-    verdict.confidence = max(0.0, min(1.0, c / 100.0 if c > 1.0 else c))
+    verdict.confidence = _normalize_confidence(verdict.confidence)
 
-    # Small local models don't emit a calibrated confidence float (they leave it 0.0).
-    # When that happens, derive a transparent confidence from how completely the
-    # grounded fields were filled — a consistency signal, not a model probability.
+    # Small local models sometimes leave confidence at 0.0. When that happens,
+    # derive a transparent proxy from how fully the grounded fields were filled —
+    # a consistency signal, not a model probability.
     if verdict.reverses_decision and verdict.confidence == 0.0:
         filled = sum(
             bool(x) for x in (verdict.decision_reference, verdict.original_reasoning, verdict.impact_if_merged)

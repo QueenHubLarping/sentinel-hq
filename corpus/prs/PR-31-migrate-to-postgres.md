@@ -42,3 +42,8 @@ integrity failures that would have required manual reconciliation.
 ## Implements
 
 ADR-002: Use PostgreSQL for Transactional Order Data
+
+## Cross-References
+- implements: ADR-002-postgres-not-nosql.md
+- discussed_in: slack-2024-05-database-choice.md
+- component: orders_service, payments_service

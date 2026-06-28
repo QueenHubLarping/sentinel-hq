@@ -48,3 +48,8 @@ document stores for those. Orders and payments: Postgres, full stop.
 **@ananya-krishna** [9:41 AM]  
 +1. Please also include the chaos test numbers. If someone proposes Mongo for orders
 again they should have to disprove those numbers first.
+
+## Cross-References
+- related_to: ADR-002-postgres-not-nosql.md
+- related_to: PR-31-migrate-to-postgres.md
+- component: orders_service, payments_service

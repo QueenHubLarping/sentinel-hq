@@ -5,6 +5,7 @@ corrupts the Kuzu DB on the next open.  This script deletes the database
 directory at the filesystem level first, which is the only reliable fix.
 """
 
+import asyncio
 import shutil
 import sys
 from pathlib import Path
@@ -17,9 +18,7 @@ from sentinel.connection import setup_cognee  # noqa: E402
 
 def _find_cognee_db_dirs() -> list[Path]:
     """Return all cognee graph DB directories/files to delete."""
-    import cognee
     from cognee.base_config import get_base_config
-    from cognee.infrastructure.databases.graph.config import get_graph_config
 
     base_cfg = get_base_config()
     db_dir = Path(base_cfg.system_root_directory) / "databases"
@@ -27,12 +26,9 @@ def _find_cognee_db_dirs() -> list[Path]:
 
     targets: list[Path] = []
     if db_dir.exists():
-        # Delete everything inside databases/ (graph DB + any shadow/WAL files).
         targets.append(db_dir)
-
     if data_dir.exists():
         targets.append(data_dir)
-
     return targets
 
 
@@ -46,9 +42,6 @@ def _wipe_filesystem() -> None:
         print(f"   deleting {p} ...")
         shutil.rmtree(p, ignore_errors=True)
     print("   filesystem wipe done")
-
-
-import asyncio  # noqa: E402
 
 
 async def _wipe_relational() -> None:

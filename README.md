@@ -32,9 +32,42 @@ python scripts/day1_spike.py
 
 See [`CLAUDE.md`](CLAUDE.md) for architecture and [`REQUIREMENTS.md`](REQUIREMENTS.md) for goals and the build plan.
 
+## Quick start
+
+```bash
+# 1. Start Ollama embeddings
+ollama serve
+ollama pull nomic-embed-text
+
+# 2. Python env
+python3.10 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+# 3. Set your Groq key
+cp .env.template .env
+# edit .env and set GROQ_API_KEY=your-key
+
+# 4. Run the detection demo (graph auto-ingested on first run)
+python scripts/day2_detect.py
+
+# 5. Run the full flip demo (flag → intentional → silent)
+python scripts/day3_flip.py
+```
+
 ## Status
 
-Day 1 spike: self-hosted Cognee verified end-to-end (remember → recall → forget).
+- **Day 1** ✅ — Self-hosted Cognee verified end-to-end (remember → recall → forget).
+- **Day 2** ✅ — Reversal detection working: 90% confidence catch on ADR-001 reversal.
+- **Day 3** ✅ — Full flip proven: same PR flagged before forget, silent after.
+
+## Tests
+
+Pure-function tests (no Cognee, no network) run anywhere:
+
+```bash
+pip install pytest
+pytest tests/
+```
 
 ---
 

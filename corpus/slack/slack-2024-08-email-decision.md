@@ -34,3 +34,8 @@ reading the ADR first. The latency numbers are the whole reason.
 
 **@priya-sharma** [10:24 AM]  
 +1. Writing ADR-001 now. The rationale lives there.
+
+## Cross-References
+- related_to: ADR-001-async-email.md
+- related_to: PR-42-implement-async-email.md
+- component: email_service

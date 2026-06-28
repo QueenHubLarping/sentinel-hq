@@ -49,3 +49,8 @@ to reject malformed writes that application code lets through. The schema is loa
 
 This is an explicit, non-obvious choice to accept migration overhead in exchange for
 correctness guarantees. Revisit only if horizontal write volume exceeds 10k orders/min.
+
+## Cross-References
+- implements: PR-31-migrate-to-postgres.md
+- discussed_in: slack-2024-05-database-choice.md
+- component: orders_service, payments_service

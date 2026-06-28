@@ -56,3 +56,8 @@ a gateway rule instead.
 **@ravi-menon** [2:32 PM]  
 Will do. Making it explicit. The incident cost us real conversion revenue — I want future
 devs to understand *why* this isn't a decoration choice.
+
+## Cross-References
+- related_to: ADR-003-gateway-rate-limiting.md
+- related_to: PR-19-gateway-rate-limit.md
+- component: api_gateway
