@@ -1,7 +1,5 @@
 """
-Local self-hosted Cognee + Ollama bootstrap. NO Cognee Cloud, NO external API —
-the LLM and embeddings both run on a local Ollama instance, so nothing leaves
-the laptop.
+Cognee bootstrap using Groq for reasoning and local Ollama for embeddings.
 
 IMPORTANT: import this module *before* importing cognee. Importing it runs
 ``load_dotenv()`` and pins the env vars Cognee reads at import time
@@ -14,24 +12,21 @@ IMPORTANT: import this module *before* importing cognee. Importing it runs
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load .env into the process environment as early as possible — Cognee reads
 # several of these at import time, so this must run before `import cognee`.
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-# Safe local defaults so the project runs even without a .env file.
+# Non-secret defaults; a Groq key must still come from the environment or .env.
 _DEFAULTS = {
     "ENABLE_BACKEND_ACCESS_CONTROL": "false",  # local single-user; no multi-tenant auth
     "TELEMETRY_DISABLED": "1",
     "CACHING": "false",  # disable session-memory cache so forget shows in recall immediately
-    "LLM_PROVIDER": "ollama",
-    "LLM_MODEL": "qwen2.5:3b",
-    # Native structured-output mode: forces a valid JSON *instance*. Without this,
-    # small local models echo the JSON *schema* and cognify fails validation.
-    "LLM_INSTRUCTOR_MODE": "json_schema_mode",
-    "LLM_ENDPOINT": "http://localhost:11434/v1",
-    "LLM_API_KEY": "ollama",
+    # Cognee routes this LiteLLM-prefixed model to Groq. Groq needs no endpoint.
+    "LLM_PROVIDER": "custom",
+    "LLM_MODEL": "groq/llama-3.3-70b-versatile",
     "EMBEDDING_PROVIDER": "ollama",
     "EMBEDDING_MODEL": "nomic-embed-text",
     "EMBEDDING_ENDPOINT": "http://localhost:11434/api/embed",
@@ -41,38 +36,48 @@ _DEFAULTS = {
 for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
 
-# Base host (strip the OpenAI-compat "/v1" suffix) for the health check.
-OLLAMA_HOST = os.environ["LLM_ENDPOINT"].split("/v1")[0]
-
 
 async def setup_cognee() -> None:
-    """Apply the local Ollama config to Cognee and fail fast if Ollama is down."""
+    """Apply Groq + Ollama config and fail fast on missing dependencies."""
     import cognee
+
+    api_key = (os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY", "")).strip()
+    if not api_key:
+        raise RuntimeError(
+            "Groq API key is missing. Set GROQ_API_KEY (recommended) or LLM_API_KEY."
+        )
 
     cognee.config.set_llm_provider(os.environ["LLM_PROVIDER"])
     cognee.config.set_llm_model(os.environ["LLM_MODEL"])
-    cognee.config.set_llm_endpoint(os.environ["LLM_ENDPOINT"])
-    cognee.config.set_llm_api_key(os.environ["LLM_API_KEY"])
+    if os.environ.get("LLM_ENDPOINT"):
+        cognee.config.set_llm_endpoint(os.environ["LLM_ENDPOINT"])
+    cognee.config.set_llm_api_key(api_key)
 
     cognee.config.set_embedding_provider(os.environ["EMBEDDING_PROVIDER"])
     cognee.config.set_embedding_model(os.environ["EMBEDDING_MODEL"])
     cognee.config.set_embedding_endpoint(os.environ["EMBEDDING_ENDPOINT"])
     cognee.config.set_embedding_dimensions(int(os.environ["EMBEDDING_DIMENSIONS"]))
 
-    _assert_ollama_running()
+    _assert_embedding_service_running()
 
 
-def _assert_ollama_running() -> None:
+def _assert_embedding_service_running() -> None:
+    """Check local Ollama when it is the configured embedding provider."""
+    if os.environ["EMBEDDING_PROVIDER"] != "ollama":
+        return
+
     import urllib.error
+    import urllib.parse
     import urllib.request
 
+    endpoint = urllib.parse.urlsplit(os.environ["EMBEDDING_ENDPOINT"])
+    ollama_host = f"{endpoint.scheme}://{endpoint.netloc}"
     try:
-        urllib.request.urlopen(f"{OLLAMA_HOST}/api/tags", timeout=3)
+        urllib.request.urlopen(f"{ollama_host}/api/tags", timeout=3)
     except (urllib.error.URLError, OSError) as exc:
         raise RuntimeError(
-            f"Ollama is not reachable at {OLLAMA_HOST}.\n"
+            f"Ollama embeddings are not reachable at {ollama_host}.\n"
             f"  Start it:   ollama serve\n"
-            f"  Pull models: ollama pull {os.environ['LLM_MODEL']} && "
-            f"ollama pull {os.environ['EMBEDDING_MODEL']}\n"
+            f"  Pull model: ollama pull {os.environ['EMBEDDING_MODEL']}\n"
             f"Original error: {exc}"
         ) from exc

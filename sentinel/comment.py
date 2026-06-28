@@ -6,10 +6,7 @@ from sentinel.detect import Verdict
 def render_comment(verdict: Verdict) -> str:
     """Markdown comment for a PR. Returns the ⚠️ warning, or a clean-bill note."""
     if not verdict.reverses_decision:
-        return (
-            "✅ **Sentinel:** no past decision appears to be reversed by this PR.\n"
-            f"_(confidence {1 - verdict.confidence:.0%})_"
-        )
+        return "✅ **Sentinel:** no past decision appears to be reversed by this PR."
 
     return (
         f"⚠️ **This PR reverses a past decision: {verdict.decision_reference}**\n\n"

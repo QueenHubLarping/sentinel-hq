@@ -1,6 +1,6 @@
 # 🛡️ Sentinel
 
-**A GitHub Action that catches when a PR silently reverses a past engineering decision — and tells you *why* that decision was made.** Built on [Cognee](https://www.cognee.ai/)'s knowledge-graph memory, running fully self-hosted on local Ollama.
+**A GitHub Action that catches when a PR silently reverses a past engineering decision — and tells you *why* that decision was made.** Built on [Cognee](https://www.cognee.ai/)'s knowledge-graph memory, using Groq reasoning and local Ollama embeddings.
 
 > Other bots review your code against the internet's conventions. **Sentinel reviews it against yours.**
 
@@ -15,15 +15,18 @@ Codebases remember *what* changed, never *why*. Months later someone opens a PR 
 3. **comment** — if it reverses a past decision, Sentinel comments with the reasoning trail and asks "intentional?"
 4. **forget / improve** — when the team confirms an intentional override, the old decision is retired (so the bot stops crying wolf); maintainer feedback teaches it which drift matters.
 
-## Fully local — no Cloud, no API key
+## Groq reasoning + local memory
 
-LLM (`llama3.2`) and embeddings (`nomic-embed-text`) both run on local **Ollama**; the graph/vector/relational stores are local files. Nothing leaves the laptop.
+The reasoning LLM (`llama-3.3-70b-versatile`) runs on **Groq**. Embeddings
+(`nomic-embed-text`) run on local **Ollama**, while graph/vector/relational stores
+remain local files. Document and PR text sent for reasoning is transmitted to Groq.
 
 ```bash
-ollama serve && ollama pull llama3.2 && ollama pull nomic-embed-text
+ollama serve && ollama pull nomic-embed-text
 python3.10 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.template .env
+# Set GROQ_API_KEY in .env
 python scripts/day1_spike.py
 ```
 
@@ -31,7 +34,7 @@ See [`CLAUDE.md`](CLAUDE.md) for architecture and [`REQUIREMENTS.md`](REQUIREMEN
 
 ## Status
 
-Day 1 spike: local Cognee + Ollama verified end-to-end (remember → recall → forget).
+Day 1 spike: self-hosted Cognee verified end-to-end (remember → recall → forget).
 
 ---
 

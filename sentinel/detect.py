@@ -20,8 +20,20 @@ GC = cognee.SearchType.GRAPH_COMPLETION
 
 
 class Verdict(BaseModel):
-    """Structured judgment about whether a PR reverses a past decision."""
+    """Structured judgment about whether a PR reverses a past decision.
 
+    Field order matters: `analysis` comes first so the model reasons (chain-of-thought)
+    BEFORE committing to the boolean — this markedly improves small-model accuracy.
+    """
+
+    analysis: str = Field(
+        description="Reason here FIRST, in this exact order: "
+        "(1) PR EFFECT — in the diff, '-' lines are REMOVED and '+' lines are ADDED; state "
+        "plainly what the PR removes and what it adds (e.g. 'removes async Celery dispatch, "
+        "adds synchronous SMTP call'). "
+        "(2) DECISION — what the MEMORY CONTEXT decided and why. "
+        "(3) CONFLICT — does the PR's effect undo the decision?"
+    )
     reverses_decision: bool = Field(
         description="True only if the PR contradicts/undoes a decision present in the MEMORY CONTEXT."
     )
@@ -47,6 +59,10 @@ You are given an incoming pull request and MEMORY CONTEXT containing the team's 
 engineering decisions and the reasoning behind them. Decide whether the PR REVERSES or
 CONTRADICTS a past decision found in the MEMORY CONTEXT.
 
+Reading the diff correctly is critical: lines starting with '-' are REMOVED by the PR,
+lines starting with '+' are ADDED. The PR's net effect = it deletes the '-' code and
+introduces the '+' code. Do not confuse the PR's change with the existing decision.
+
 You MUST fill EVERY field, taking content only from the MEMORY CONTEXT (never invent):
 - reverses_decision: true if the PR undoes/contradicts a decision in the context; else false.
 - decision_reference: the decision's identifier from the context (e.g. "ADR-001 (async
@@ -57,7 +73,13 @@ You MUST fill EVERY field, taking content only from the MEMORY CONTEXT (never in
 - confidence: a number 0.0-1.0. If reverses_decision is true, use 0.7-0.95.
 
 A PR that re-introduces something a past decision deliberately removed IS a reversal.
-If the contradicted decision is not in the MEMORY CONTEXT, set reverses_decision=false.
+Common reversal patterns to catch:
+- the context says a thing was made ASYNC / moved to a QUEUE / made NON-BLOCKING for a
+  reason, and the PR makes it SYNCHRONOUS / INLINE / BLOCKING again.
+- the context says a library/pattern was REMOVED/REPLACED, and the PR brings it back.
+Think step by step: identify the decision in the context, identify what the PR changes,
+then check if the PR undoes the decision. If the contradicted decision is not in the
+MEMORY CONTEXT, set reverses_decision=false.
 
 Example — PR makes a queued operation synchronous; context has "ADR-007: use async X to
 cut latency". Correct output: reverses_decision=true, decision_reference="ADR-007 (async X)",
@@ -66,10 +88,19 @@ impact_if_merged="reintroduces the latency ADR-007 removed", confidence=0.9.
 """
 
 
-async def _recall_context(query: str) -> str:
-    """Pull the relevant decision context from the graph (no LLM answer, just evidence)."""
-    res = await cognee.search(query, query_type=GC, only_context=True)
-    return str(res)
+async def _recall_context(pr_text: str) -> str:
+    """Pull the relevant decision(s) for this PR as a coherent summary (decision + why).
+
+    A GRAPH_COMPLETION answer is more robust judge input than the raw only_context blob,
+    whose shape varies between cognify builds. We also include the raw context as backup.
+    """
+    question = (
+        "What past engineering decision relates to the following change, and what was the "
+        f"reasoning behind it? Quote specifics.\n\nChange:\n{pr_text[:800]}"
+    )
+    answer = await cognee.search(question, query_type=GC)
+    raw = await cognee.search(question, query_type=GC, only_context=True)
+    return (" ".join(str(r) for r in answer) if answer else "") + "\n\n" + str(raw)
 
 
 async def detect_reversal(pr_text: str, retrieval_query: str | None = None) -> Verdict:
@@ -77,8 +108,7 @@ async def detect_reversal(pr_text: str, retrieval_query: str | None = None) -> V
     from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
     # 1. recall — what past decisions does this change touch?
-    query = retrieval_query or pr_text[:500]
-    context = await _recall_context(query)
+    context = await _recall_context(retrieval_query or pr_text)
 
     # 2. judge — grounded strictly in the retrieved context
     judge_input = (
@@ -90,6 +120,10 @@ async def detect_reversal(pr_text: str, retrieval_query: str | None = None) -> V
         system_prompt=_SYSTEM_PROMPT,
         response_model=Verdict,
     )
+
+    # Normalize confidence to [0,1] — small models sometimes emit 85 instead of 0.85.
+    c = verdict.confidence
+    verdict.confidence = max(0.0, min(1.0, c / 100.0 if c > 1.0 else c))
 
     # Small local models don't emit a calibrated confidence float (they leave it 0.0).
     # When that happens, derive a transparent confidence from how completely the
