@@ -93,15 +93,25 @@ def checkout_branch(branch: str) -> None:
     subprocess.run(["git", "checkout", "-B", branch, "FETCH_HEAD"], cwd=workspace, check=True)
 
 
-def commit_and_push(branch: str, message: str) -> None:
-    """Commit all working-tree changes and push to *branch* (uses checkout's token)."""
+def commit_and_push(branch: str, message: str) -> bool:
+    """Commit all working-tree changes and push to *branch* (uses checkout's token).
+
+    Idempotent: if nothing changed (e.g. the ADR was already superseded by an earlier
+    '/sentinel intentional'), it does nothing and returns False instead of failing on an
+    empty commit. Returns True when a commit was pushed.
+    """
     workspace = os.environ.get("GITHUB_WORKSPACE", ".")
     run = lambda *a: subprocess.run(a, cwd=workspace, check=True)
     run("git", "config", "user.name", "sentinel-bot")
     run("git", "config", "user.email", "sentinel-bot@users.noreply.github.com")
     run("git", "add", "-A")
+    # `git diff --cached --quiet` exits non-zero iff there are staged changes.
+    if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=workspace).returncode == 0:
+        print("   (nothing to commit — ADR already superseded)")
+        return False
     run("git", "commit", "-m", message)
     run("git", "push", "origin", f"HEAD:{branch}")
+    return True
 
 
 def load_pr_text(pr_file: str | None = None) -> str:
@@ -122,22 +132,10 @@ def load_pr_text(pr_file: str | None = None) -> str:
 
 
 def post_comment(comment: str) -> None:
-    """Post a comment to the current PR. Requires GITHUB_TOKEN + GitHub event context."""
-    token = os.environ["GITHUB_TOKEN"]
+    """Post a comment to the current PR. Works for both pull_request and issue_comment
+    events (issue_number handles both shapes). Requires GITHUB_TOKEN + event context."""
     repo = os.environ["GITHUB_REPOSITORY"]
-    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
-    pr_number = event["pull_request"]["number"]
-
-    url = f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps({"body": comment}).encode(),
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "Content-Type": "application/json",
-            "User-Agent": "sentinel-bot",
-        },
-    )
-    urllib.request.urlopen(req)
+    number = issue_number()
+    if number is None:
+        raise SystemExit("post_comment: could not determine the PR/issue number from the event.")
+    _api(f"/repos/{repo}/issues/{number}/comments", method="POST", body={"body": comment})
