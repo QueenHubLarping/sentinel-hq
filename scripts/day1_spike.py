@@ -30,9 +30,20 @@ async def _answer(query: str) -> str:
     return " ".join(str(r) for r in res) if res else ""
 
 
-async def _context(query: str) -> list:
-    """Raw retrieved graph/vector context (no LLM answer) — the honest before/after measure."""
-    return await cognee.search(query, query_type=GC, only_context=True)
+async def _context_chars(query: str) -> int:
+    """Size of the raw retrieved graph context. Collapses to ~0 after forget.
+    (search(only_context=True) returns a single context blob, so its *length*
+    — not the list length — is the honest before/after signal.)"""
+    res = await cognee.search(query, query_type=GC, only_context=True)
+    return len(str(res))
+
+
+async def _node_count() -> int:
+    """Total nodes in the knowledge graph — the ground-truth measure for forget."""
+    from cognee.infrastructure.databases.graph import get_graph_engine
+
+    nodes, _ = await (await get_graph_engine()).get_graph_data()
+    return len(nodes)
 
 
 async def gate_1_ingest_and_recall() -> bool:
@@ -46,11 +57,9 @@ async def gate_1_ingest_and_recall() -> bool:
     print(f"\n-> recall: {q!r}")
     answer = await _answer(q)
     print(f"   answer: {answer or '(empty)'}")
+    print(f"   graph nodes: {await _node_count()} | retrieved context chars: {await _context_chars(q)}")
 
-    ctx = await _context(q)
-    print(f"   retrieved context items: {len(ctx)}")
-
-    ok = bool(answer) and len(ctx) > 0
+    ok = bool(answer) and await _node_count() > 0
     print(f"\n{'PASS' if ok else 'FAIL'}: GATE 1")
     return ok
 
@@ -87,17 +96,17 @@ async def gate_2_forget_flips_recall() -> bool:
     print("=" * 64)
 
     q = "async email decision rationale"
-    before = await _context(q)
-    print(f"  before forget -> context items: {len(before)}")
+    before_nodes, before_chars = await _node_count(), await _context_chars(q)
+    print(f"  before forget -> graph nodes: {before_nodes} | recall context chars: {before_chars}")
 
     print(f"  cognee.forget(dataset={DATASET_NAME!r}) ...")
     await cognee.forget(dataset=DATASET_NAME)
 
-    after = await _context(q)
-    print(f"  after  forget -> context items: {len(after)}")
+    after_nodes, after_chars = await _node_count(), await _context_chars(q)
+    print(f"  after  forget -> graph nodes: {after_nodes} | recall context chars: {after_chars}")
 
-    ok = len(before) > 0 and len(after) == 0
-    status = "PASS" if ok else ("PARTIAL" if len(after) < len(before) else "FAIL")
+    ok = before_nodes > 0 and after_nodes == 0
+    status = "PASS" if ok else ("PARTIAL" if after_nodes < before_nodes else "FAIL")
     print(f"\n{status}: GATE 2 (deletion changes the next recall)")
     print("  (Day 4: node-level retire instead of whole-dataset, for the PR-flip demo)")
     return ok

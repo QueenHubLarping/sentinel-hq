@@ -24,8 +24,12 @@ load_dotenv()
 _DEFAULTS = {
     "ENABLE_BACKEND_ACCESS_CONTROL": "false",  # local single-user; no multi-tenant auth
     "TELEMETRY_DISABLED": "1",
+    "CACHING": "false",  # disable session-memory cache so forget shows in recall immediately
     "LLM_PROVIDER": "ollama",
-    "LLM_MODEL": "llama3.2",
+    "LLM_MODEL": "qwen2.5:3b",
+    # Native structured-output mode: forces a valid JSON *instance*. Without this,
+    # small local models echo the JSON *schema* and cognify fails validation.
+    "LLM_INSTRUCTOR_MODE": "json_schema_mode",
     "LLM_ENDPOINT": "http://localhost:11434/v1",
     "LLM_API_KEY": "ollama",
     "EMBEDDING_PROVIDER": "ollama",
