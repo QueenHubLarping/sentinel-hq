@@ -17,13 +17,24 @@ corpus/
 """
 
 from pathlib import Path
+from uuid import UUID, uuid5
 
 import cognee
+from cognee.tasks.ingestion.data_item import DataItem
 
 CORPUS_DIR = Path(__file__).parent.parent / "corpus"
 DATASET_NAME = "sentinel_decisions"
 
 _SUBDIR_TO_TYPE = {"adrs": "ADR", "slack": "Slack", "prs": "PR"}
+
+# Fixed namespace so data_ids are stable across runs — lets resolve.py do
+# selective forget by data_id without querying the DB each time.
+_SENTINEL_NS = UUID("7c9e6679-7425-40de-944b-e07fc1f90ae7")
+
+
+def corpus_file_data_id(filename: str) -> UUID:
+    """Return the stable data_id for a corpus file given its basename."""
+    return uuid5(_SENTINEL_NS, filename)
 
 
 def _iter_corpus_files():
@@ -41,7 +52,14 @@ async def ingest_corpus() -> None:
         content = path.read_text(encoding="utf-8")
         # Prepend source metadata so Cognee includes it during entity extraction.
         tagged = f"[source_type: {source_type}] [file: {path.name}]\n\n{content}"
-        await cognee.add(tagged, dataset_name=DATASET_NAME)
+        # DataItem gives each file a stable, addressable data_id (for selective forget)
+        # and a human-readable label (the filename) visible in datasets.list_data().
+        item = DataItem(
+            data=tagged,
+            label=path.name,
+            data_id=corpus_file_data_id(path.name),
+        )
+        await cognee.add(item, dataset_name=DATASET_NAME)
         print(f"   + {path.name} ({source_type})")
 
     print("-> cognify() — extracting entities + building graph (slow on a local model)...")
