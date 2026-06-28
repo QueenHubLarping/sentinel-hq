@@ -1,0 +1,38 @@
+name: "Sentinel"
+description: "Catch PRs that silently reverse a past engineering decision, and explain why it was made."
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  mode:
+    description: "dry-run (print + job summary) or post (comment on the PR)"
+    required: false
+    default: "dry-run"
+  pr-file:
+    description: "Optional path to a PR markdown file (local testing; otherwise uses the PR event)"
+    required: false
+    default: ""
+  github-token:
+    description: "Token used to post the comment (only needed for mode=post)"
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - shell: bash
+      run: pip install -r "${{ github.action_path }}/requirements.txt"
+    - shell: bash
+      env:
+        SENTINEL_MODE: ${{ inputs.mode }}
+        SENTINEL_PR_FILE: ${{ inputs.pr-file }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
+
+# NOTE: detection needs a local Ollama (LLM + embeddings). Use a self-hosted runner
+# with `ollama serve` + the models pulled, OR point the env at an API LLM provider.
+# GitHub-hosted runners have no Ollama.

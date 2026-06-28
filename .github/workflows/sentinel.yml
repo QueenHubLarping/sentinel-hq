@@ -1,0 +1,27 @@
+# Example workflow: run Sentinel on every PR.
+#
+# Detection needs a local Ollama (LLM + embeddings), so this uses a SELF-HOSTED runner
+# with `ollama serve` running and the models pulled:
+#   ollama pull qwen2.5:3b && ollama pull nomic-embed-text
+# Start dry-run (comments only printed to the job summary); switch mode to "post"
+# once you're happy, to have Sentinel comment on the PR.
+
+name: Sentinel
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write   # needed for mode: post
+  contents: read
+
+jobs:
+  sentinel:
+    runs-on: self-hosted   # the machine running Ollama
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Sentinel
+        uses: ./
+        with:
+          mode: dry-run     # change to "post" to comment on the PR
