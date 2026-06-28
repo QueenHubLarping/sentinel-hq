@@ -51,3 +51,8 @@ in middleware" would still saturate our worker pool.
 Application-layer throttle decorators (`@ratelimit`, DRF `throttle_classes`) are explicitly
 **banned** for public endpoints. If you find yourself adding one, re-read this ADR and
 implement the limit in the gateway config instead.
+
+## Cross-References
+- implements: PR-19-gateway-rate-limit.md
+- discussed_in: slack-2024-03-rate-limiting.md
+- component: api_gateway

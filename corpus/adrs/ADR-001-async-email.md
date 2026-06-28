@@ -44,3 +44,8 @@ guarantee the queue provides.
 This is a deliberate, non-obvious choice. Synchronous email is the "simpler" path —
 but simplicity here trades user-perceived speed and reliability for convenience.
 That trade is wrong for a checkout flow.
+
+## Cross-References
+- implements: PR-42-implement-async-email.md
+- discussed_in: slack-2024-08-email-decision.md
+- component: email_service

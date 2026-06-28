@@ -46,7 +46,17 @@ async def main() -> int:
     pr_file = os.environ.get("SENTINEL_PR_FILE") or (sys.argv[1] if len(sys.argv) > 1 else None)
 
     pr_text = load_pr_text(pr_file)
-    await setup_cognee()
+
+    try:
+        await setup_cognee()
+    except RuntimeError as exc:
+        msg = (
+            f"⚠️ **Sentinel: configuration error** — {exc}\n\n"
+            "Sentinel cannot run; skipping check. Fix the error above and re-run."
+        )
+        print(msg)
+        _write_summary(msg)
+        return 0  # advisory: never fail the build
 
     if await _node_count() == 0:
         print("-> decision graph empty; ingesting corpus (one-time)...")
