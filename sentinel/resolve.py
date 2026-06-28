@@ -23,6 +23,30 @@ import cognee
 from sentinel.ingest import DATASET_NAME, adr_dir, corpus_file_data_id
 
 
+def supersede_adr_file(adr_id: str, pr_number: int | None = None):
+    """Mark the ADR file for *adr_id* as Superseded in docs/adr (source of truth).
+
+    This is the durable, git-auditable way '/sentinel intentional' retires a decision
+    on ephemeral CI runners: rewriting the '**Status:**' line to 'Superseded' makes the
+    next ingest skip this ADR (see ingest.ingest_corpus), so detection stops flagging
+    PRs that contradict it — without relying on a persistent graph.
+
+    Returns the edited Path, or None if no matching ADR file was found.
+    """
+    matches = sorted(adr_dir().glob(f"{adr_id}*.md"))
+    if not matches:
+        return None
+    path = matches[0]
+    text = path.read_text(encoding="utf-8")
+    note = "Superseded" + (f" (intentional override in #{pr_number})" if pr_number else " (intentional override)")
+    new, n = re.subn(r"(\*\*Status:\*\*\s*).+", rf"\1{note}", text, count=1)
+    if n == 0:
+        # No status line present — insert one right after the H1 title (best effort).
+        new = re.sub(r"(\A#.*\n)", rf"\1\n**Status:** {note}\n", text, count=1)
+    path.write_text(new, encoding="utf-8")
+    return path
+
+
 def _adr_number(decision_reference: str) -> str | None:
     """Extract and normalize an ADR number from a model decision_reference string.
 

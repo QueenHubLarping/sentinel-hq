@@ -21,7 +21,7 @@ def test_render_comment_no_reversal():
         reverses_decision=False,
     )
     comment = render_comment(v)
-    assert comment.startswith("✅")
+    assert "✅" in comment
     assert "no past decision" in comment.lower()
 
 

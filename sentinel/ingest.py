@@ -297,11 +297,21 @@ async def ingest_corpus() -> None:
     files = list(_iter_corpus_files())
     print(f"-> Staging {len(files)} corpus file(s) into local Cognee...")
 
+    staged = 0
     for path, source_type in files:
         content = path.read_text(encoding="utf-8")
         # Build enriched metadata header; fall back to bare tag on any error.
         try:
             meta = _extract_metadata(path, source_type)
+            # A superseded ADR is a *retired* decision — no longer institutional
+            # memory — so we leave it out of the graph entirely. This is how
+            # '/sentinel intentional' takes durable effect on ephemeral CI runners:
+            # the resolve step sets the ADR's status to Superseded in docs/adr, and
+            # the next ingest simply doesn't add it, so detection stops flagging PRs
+            # that contradict it. (No graph persistence required.)
+            if source_type == "ADR" and meta.get("decision_status") == "superseded":
+                print(f"   - skipping {path.name} (ADR superseded — retired from memory)")
+                continue
             header = _build_header(path, source_type, meta)
         except Exception:
             header = f"[source_type: {source_type}] [file: {path.name}]"
@@ -314,11 +324,12 @@ async def ingest_corpus() -> None:
             data_id=corpus_file_data_id(path.name),
         )
         await cognee.add(item, dataset_name=DATASET_NAME)
+        staged += 1
         print(f"   + {path.name} ({source_type})")
 
-    print("-> cognify() — extracting entities + building graph (slow on a local model)...")
+    print(f"-> cognify() — extracting entities + building graph from {staged} doc(s)...")
     await cognee.cognify(datasets=[DATASET_NAME])
-    print(f"OK: graph built from {len(files)} documents in dataset '{DATASET_NAME}'.")
+    print(f"OK: graph built from {staged} documents in dataset '{DATASET_NAME}'.")
 
 
 if __name__ == "__main__":

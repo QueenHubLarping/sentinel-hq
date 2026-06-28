@@ -22,10 +22,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sentinel.connection import setup_cognee  # noqa: E402
 import cognee  # noqa: E402
-from sentinel.comment import render_comment  # noqa: E402
+from sentinel.comment import render_comment, render_resolution  # noqa: E402
 from sentinel.detect import detect_reversal  # noqa: E402
-from sentinel.github_pr import load_pr_text, post_comment  # noqa: E402
+from sentinel.github_pr import (  # noqa: E402
+    checkout_branch,
+    comment_body,
+    commit_and_push,
+    event_name,
+    find_flagged_decision_text,
+    issue_number,
+    load_pr_text,
+    post_comment,
+    pr_head_branch,
+)
 from sentinel.ingest import ingest_corpus  # noqa: E402
+from sentinel.resolve import _adr_number, supersede_adr_file  # noqa: E402
 
 
 async def _node_count() -> int:
@@ -41,7 +52,43 @@ def _write_summary(comment: str) -> None:
         Path(summary_path).write_text(comment, encoding="utf-8")
 
 
+async def handle_resolve() -> int:
+    """Handle a '/sentinel intentional' comment: retire the flagged decision.
+
+    Cheap and self-contained — no cognee/LLM. We read which ADR was flagged from
+    Sentinel's prior comment, mark that ADR Superseded in docs/adr on the PR's branch,
+    push it, and confirm. The next detection rebuilds memory without that ADR.
+    """
+    if "/sentinel intentional" not in comment_body().lower():
+        print("Comment is not '/sentinel intentional'; nothing to do.")
+        return 0
+
+    number = issue_number()
+    adr_id = _adr_number(find_flagged_decision_text(number)) if number else None
+    if not adr_id:
+        print("No prior Sentinel reversal flag found on this PR; nothing to retire.")
+        post_comment("🛡️ _Sentinel_: I couldn't find a reversal I'd flagged on this PR to retire.")
+        return 0
+
+    branch = pr_head_branch(number)
+    checkout_branch(branch)
+    path = supersede_adr_file(adr_id, number)
+    if not path:
+        post_comment(f"🛡️ _Sentinel_: couldn't locate the `{adr_id}` file in `docs/adr/` to supersede.")
+        return 0
+
+    commit_and_push(branch, f"docs(adr): supersede {adr_id} — intentional override in #{number}")
+    print(f"-> retired {adr_id}: marked {path.name} Superseded on {branch}")
+    post_comment(render_resolution(adr_id, number))
+    return 0
+
+
 async def main() -> int:
+    # '/sentinel intentional' replies arrive as issue_comment events — handle the
+    # forget loop here (no cognee needed) and return before the detection path.
+    if event_name() == "issue_comment":
+        return await handle_resolve()
+
     mode = os.environ.get("SENTINEL_MODE", "dry-run")
     pr_file = os.environ.get("SENTINEL_PR_FILE") or (sys.argv[1] if len(sys.argv) > 1 else None)
 
