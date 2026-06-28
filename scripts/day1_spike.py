@@ -1,187 +1,130 @@
 """
-Day 1 spike — gates:
-  [1] Data lands in Cognee Cloud (ingest corpus, verify recall returns it)
-  [2] forget() visibly removes data from recall (before/after behavior change)
+Day 1 spike — local self-hosted Cognee + Ollama (no Cloud, no API key).
 
-Run: python scripts/day1_spike.py
+Gates (the load-bearing mechanics the whole project depends on):
+  [1] remember + recall: ingest the corpus, confirm a graph-derived answer comes
+      back (SPINE-1 — the multi-hop "why").
+  [2] forget flips recall: delete the dataset, confirm the retrieved graph
+      context drops to zero (SPINE-2 — deletion changes the next answer).
+
+Run from the repo root:
+    python scripts/day1_spike.py
 """
 
 import asyncio
-import cognee
-from dotenv import load_dotenv
+import sys
+from pathlib import Path
 
-load_dotenv()
+# Make `import sentinel...` work when run as `python scripts/day1_spike.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from sentinel.connection import setup_cognee  # noqa: E402  (loads .env before cognee)
+import cognee  # noqa: E402
+from sentinel.ingest import DATASET_NAME, ingest_corpus  # noqa: E402
+
+GC = cognee.SearchType.GRAPH_COMPLETION
 
 
-async def gate_1_ingest_and_verify() -> bool:
-    print("=" * 60)
-    print("GATE 1: Ingest corpus → verify recall")
-    print("=" * 60)
+async def _answer(query: str) -> str:
+    res = await cognee.search(query, query_type=GC)
+    return " ".join(str(r) for r in res) if res else ""
 
-    from sentinel.ingest import ingest_corpus
+
+async def _context(query: str) -> list:
+    """Raw retrieved graph/vector context (no LLM answer) — the honest before/after measure."""
+    return await cognee.search(query, query_type=GC, only_context=True)
+
+
+async def gate_1_ingest_and_recall() -> bool:
+    print("=" * 64)
+    print("GATE 1: remember + recall (SPINE-1: the multi-hop 'why')")
+    print("=" * 64)
+
     await ingest_corpus()
 
-    print("\n→ Query: 'why was async email chosen for checkout?'")
-    results = await cognee.recall("why was async email chosen for the checkout flow?")
+    q = "Why was asynchronous email chosen for the checkout flow?"
+    print(f"\n-> recall: {q!r}")
+    answer = await _answer(q)
+    print(f"   answer: {answer or '(empty)'}")
 
-    print("\n── Results ──")
-    if results:
-        for r in results:
-            print(f"  {r}")
-    else:
-        print("  (no results — check Cloud connection)")
+    ctx = await _context(q)
+    print(f"   retrieved context items: {len(ctx)}")
 
-    print("\n→ Query: 'what engineering decision affects email_service?'")
-    results2 = await cognee.recall("what engineering decision affects email_service?")
-    for r in results2:
-        print(f"  {r}")
-
-    gate_ok = bool(results or results2)
-    print(f"\n{'✓ GATE 1 PASSED' if gate_ok else '✗ GATE 1 FAILED — fix Cloud config'}")
-    return gate_ok
-
-
-async def gate_2_forget_removes_node() -> None:
-    print("\n" + "=" * 60)
-    print("GATE 2: forget() → verify node no longer recalled")
-    print("=" * 60)
-
-    print("\n→ Before forget:")
-    before = await cognee.recall("async email decision rationale")
-    print(f"  {len(before)} result(s)")
-    if before:
-        print(f"  Sample: {str(before[0])[:200]}")
-
-    from sentinel.ingest import DATASET_NAME
-    print(f"\n→ Calling cognee.forget(dataset_name='{DATASET_NAME}') ...")
-    await cognee.forget(dataset_name=DATASET_NAME)
-
-    print("\n→ After forget:")
-    after = await cognee.recall("async email decision rationale")
-    print(f"  {len(after)} result(s)")
-
-    if len(before) > 0 and len(after) == 0:
-        print("\n✓ GATE 2 PASSED: forget() removes data from recall.")
-        print("  (Day 4: node-level retire — same PR silent after intentional mark)")
-    elif len(before) > 0 and len(after) < len(before):
-        print("\n~ GATE 2 PARTIAL: fewer results after forget.")
-    else:
-        print("\n✗ GATE 2 — no change. Investigate forget() API.")
+    ok = bool(answer) and len(ctx) > 0
+    print(f"\n{'PASS' if ok else 'FAIL'}: GATE 1")
+    return ok
 
 
 async def inspect_graph() -> None:
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 64)
     print("GRAPH INSPECTION: what did cognify() actually build?")
-    print("=" * 60)
-
-    # ── 1. Schema inventory (node types + relationship distribution) ───────
-    # get_schema_inventory() is a public cognee API that calls get_graph_data()
-    # internally and summarizes: per-type node counts, sample names, and
-    # the full relationship distribution between types. This tells us whether
-    # cognify extracted typed edges or just generic entity links.
-    print("\n── Node types and relationships ──")
+    print("=" * 64)
     try:
-        inventory = await cognee.get_schema_inventory(dataset="sentinel_decisions")
-        if not inventory:
-            inventory = await cognee.get_schema_inventory()  # fallback: all datasets
-
-        if inventory:
-            for record in inventory:
-                node_type = record.get("type", "?")
-                count = record.get("count", 0)
-                samples = record.get("samples", [])
-                print(f"\n  [{node_type}] — {count} node(s)")
-                for name in samples:
-                    print(f"    • {name}")
-                for rel in record.get("relationships", []):
-                    print(f"    → {rel['relation']} → {rel['to_type']} (×{rel['count']})")
-        else:
-            print("  (empty — graph may still be processing)")
-    except Exception as e:
-        print(f"  get_schema_inventory failed: {e}")
-
-    # ── 2. Raw graph data: all nodes + edges with relationship names ────────
-    # get_graph_engine().get_graph_data() returns the raw graph:
-    #   nodes: List[(node_id, {type, name, ...})]
-    #   edges: List[(source_id, target_id, relationship_name, {props})]
-    # This is the ground truth for whether cross-document typed edges exist.
-    print("\n── Raw edges (relationship_name between nodes) ──")
-    try:
-        from cognee.infrastructure.databases.graph import get_graph_engine
-        graph_engine = await get_graph_engine()
-        nodes, edges = await graph_engine.get_graph_data()
-
-        # Build id→name map for readable output
-        id_to_name = {
-            node_id: props.get("name", props.get("type", node_id[:8]))
-            for node_id, props in nodes
-        }
-
-        print(f"  Total nodes: {len(nodes)} | Total edges: {len(edges)}")
-        print()
-
-        # Group edges by relationship_name so we can see what labels cognify used
         from collections import defaultdict
-        by_relation = defaultdict(list)
-        for src, tgt, rel_name, _ in edges:
-            by_relation[rel_name].append((id_to_name.get(src, src[:8]), id_to_name.get(tgt, tgt[:8])))
 
-        for rel_name, pairs in sorted(by_relation.items()):
-            print(f"  [{rel_name}] ({len(pairs)} edge(s))")
-            for src_name, tgt_name in pairs[:3]:  # show up to 3 examples per type
-                print(f"    {src_name}  →  {tgt_name}")
-            if len(pairs) > 3:
-                print(f"    ... and {len(pairs) - 3} more")
+        from cognee.infrastructure.databases.graph import get_graph_engine
 
-        # ── 3. Graph metrics ────────────────────────────────────────────────
-        print("\n── Graph metrics ──")
-        metrics = await graph_engine.get_graph_metrics()
-        for k, v in metrics.items():
-            print(f"  {k}: {v}")
+        engine = await get_graph_engine()
+        nodes, edges = await engine.get_graph_data()
+        id_to_name = {nid: (p.get("name") or p.get("type") or nid[:8]) for nid, p in nodes}
+        print(f"  nodes: {len(nodes)} | edges: {len(edges)}")
 
-    except Exception as e:
-        print(f"  Raw graph access failed (expected in Cloud mode): {e}")
-        print("  → Use cognee.search(..., query_type=SearchType.INSIGHTS) for Cloud inspection")
-
-        # Cloud fallback: INSIGHTS search surfaces entity relationships
-        print("\n── INSIGHTS search (Cloud-compatible edge view) ──")
-        try:
-            from cognee.api.v1.search import SearchType
-            insight_results = await cognee.search(
-                "all entities and relationships in the decision corpus",
-                query_type=SearchType.INSIGHTS,
-            )
-            for r in insight_results[:10]:
-                print(f"  {r}")
-        except Exception as e2:
-            print(f"  INSIGHTS search also failed: {e2}")
+        by_rel = defaultdict(list)
+        for src, tgt, rel, _ in edges:
+            by_rel[rel].append((id_to_name.get(src, src[:8]), id_to_name.get(tgt, tgt[:8])))
+        print("\n  edges by relationship:")
+        for rel, pairs in sorted(by_rel.items()):
+            print(f"   [{rel}] x{len(pairs)}")
+            for a, b in pairs[:3]:
+                print(f"      {a}  ->  {b}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"  raw graph access failed: {exc}")
 
 
-async def main():
-    from sentinel.connection import setup_cognee
+async def gate_2_forget_flips_recall() -> bool:
+    print("\n" + "=" * 64)
+    print("GATE 2: forget flips recall (SPINE-2)")
+    print("=" * 64)
+
+    q = "async email decision rationale"
+    before = await _context(q)
+    print(f"  before forget -> context items: {len(before)}")
+
+    print(f"  cognee.forget(dataset={DATASET_NAME!r}) ...")
+    await cognee.forget(dataset=DATASET_NAME)
+
+    after = await _context(q)
+    print(f"  after  forget -> context items: {len(after)}")
+
+    ok = len(before) > 0 and len(after) == 0
+    status = "PASS" if ok else ("PARTIAL" if len(after) < len(before) else "FAIL")
+    print(f"\n{status}: GATE 2 (deletion changes the next recall)")
+    print("  (Day 4: node-level retire instead of whole-dataset, for the PR-flip demo)")
+    return ok
+
+
+async def main() -> None:
     await setup_cognee()
+    print("\nSentinel — Day 1 Spike (local Cognee + Ollama)\n")
 
-    print("\nSentinel — Day 1 Spike (Cognee Cloud)")
-    print()
+    # Clean slate so the spike is reproducible.
+    await cognee.prune.prune_data()
+    await cognee.prune.prune_system(metadata=True)
 
-    gate1_ok = await gate_1_ingest_and_verify()
-    if not gate1_ok:
-        print("\nFix GATE 1 before proceeding.")
+    if not await gate_1_ingest_and_recall():
+        print("\nGATE 1 failed — stop and fix before Day 2.")
         return
 
-    # Inspect BEFORE forget so we see the populated graph
     await inspect_graph()
+    await gate_2_forget_flips_recall()
 
-    await gate_2_forget_removes_node()
-
-    print("\n→ Generating graph visualization...")
+    print("\n-> graph visualization (screenshot for the deck)")
     try:
         await cognee.visualize_graph()
-        print("  Screenshot the viz for the demo deck.")
-    except Exception as e:
-        print(f"  visualize_graph: {e}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"   visualize_graph: {exc}")
 
-    print("\nDay 1 done. Next: Day 2 — multi-hop recall (SPINE-1).")
+    print("\nDay 1 done. Next: Day 2 — multi-hop reversal detection on an incoming PR.")
 
 
 if __name__ == "__main__":

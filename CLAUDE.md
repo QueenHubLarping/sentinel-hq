@@ -1,51 +1,35 @@
 # Sentinel — CLAUDE.md
 
 Decision-reversal guardian for code review, built on Cognee.
-Hackathon: Cognee "Hangover Part AI" (Jun 29 – Jul 5 2026). Track: Best Use of Open Source.
+Hackathon: Cognee "Hangover Part AI" (Jun 29 – Jul 5 2026). Track: **Best Use of Open Source**.
 
-# Judging criteria:
+## Judging criteria
 
-- 01
-Potential Impact
-How effectively does the project address a meaningful problem or unlock a valuable use case with persistent AI memory?
-- 02
-Creativity & Innovation
-How unique is the idea? Does it push the boundaries of what's possible when an agent never forgets?
-- 03
-Technical Excellence
-How well is the project implemented? Does it demonstrate strong engineering practices and clean, maintainable code?
+1. **Potential Impact** — addresses a meaningful problem with persistent AI memory.
+2. **Creativity & Innovation** — pushes what's possible when an agent never forgets.
+3. **Technical Excellence** — clean, maintainable engineering.
+4. **Best Use of Cognee** — depth of the memory lifecycle (remember / recall / improve / forget) + hybrid graph-vector layer.
+5. **User Experience** — intuitive, polished, adoptable.
+6. **Presentation Quality** — demo, README, and submission communicate problem → solution → impact.
 
-- 04
-Best Use of Cognee
-How deeply and effectively does the project lean on Cognee's memory lifecycle APIs and its hybrid graph-vector memory layer?
-
-- 05
-User Experience
-Is the project intuitive to use? Does it provide a polished experience that users would actually want to adopt?
-
-- 06
-Presentation Quality
-How clearly is the project presented? Do the demo, README, and submission communicate the problem, solution, and impact?
-
-## Setup
+## Setup (100% local — self-hosted Cognee + Ollama, no Cloud, no API key)
 
 ```bash
-# 1. Create and activate a virtual environment
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS/Linux
+# 1. Ollama (the local LLM runtime — everything runs on this laptop)
+ollama serve
+ollama pull llama3.2            # reasoning LLM
+ollama pull nomic-embed-text    # embeddings
 
-# 2. Install dependencies
+# 2. Python env (use 3.10–3.12; cognee needs >=3.10)
+python3.10 -m venv .venv
+source .venv/bin/activate       # macOS/Linux
+# .venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 
-# 3. Configure environment
-copy .env.template .env
-# Fill in:
-#   COGNEE_CLOUD_URL=https://your-tenant.aws.cognee.ai
-#   COGNEE_CLOUD_API_KEY=your_key_here
-# (Sign up at https://app.cognee.ai — use code COGNEE-35 for the free Developer plan)
+# 3. Config (no secrets — just points Cognee at local Ollama)
+cp .env.template .env
 
-# 4. Run Day 1 spike
+# 4. Run the Day 1 spike
 python scripts/day1_spike.py
 ```
 
@@ -53,32 +37,50 @@ python scripts/day1_spike.py
 
 ```
 sentinel/
-  connection.py     — Cognee Cloud setup (setup_cognee called once at startup)
-  ingest.py         — pushes curated decision corpus to Cognee Cloud via remember()
+  connection.py     — local Ollama bootstrap; setup_cognee() applies config + checks Ollama
+  ingest.py         — remember phase: cognee.add() + cognee.cognify() over the corpus
 corpus/
   adrs/             — Architecture Decision Records (markdown)
   slack/            — static "Slack" conversation exports (markdown)
   prs/              — PR metadata (markdown)
 scripts/
-  day1_spike.py     — Day 1 gates: ingest + verify recall + forget
+  day1_spike.py     — Day 1 gates: remember+recall (SPINE-1) and forget-flips-recall (SPINE-2)
 ```
 
 ## Architecture decisions
 
-- **Cognee Cloud exclusively** — no self-hosted fallback. LLM, embeddings, and graph
-  storage are all handled by Cognee Cloud. Zero local infrastructure to manage.
-- **cognee.remember() for corpus ingestion** — structured markdown with explicit
-  relationship labels (justified_by, discussed_in, implemented_in) so Cognee extracts
-  typed edges. Simpler and more reliable than managing local DataPoints.
-- **cognee.recall() for retrieval** — the V2 memory API; cleaner than search() for
-  agent-style queries.
-- **cognee.forget() for the SPINE-2 demo** — dataset-level forget proves behavior
-  change on screen. Day 4 adds node-level retire (active → retired) for the PR flip demo.
+- **Local self-hosted Cognee + Ollama — no Cloud, no external API.** LLM (`llama3.2`)
+  and embeddings (`nomic-embed-text`) both run on local Ollama. Graph (Kuzu), vector
+  (LanceDB), and relational (SQLite) stores are all local files. This is the
+  Best-Use-of-Open-Source track; Cognee Cloud is also waitlisted, so local is the only
+  path. Config is env-driven (`.env`), applied in `sentinel/connection.py`.
+- **Single-user/local posture** — `ENABLE_BACKEND_ACCESS_CONTROL=false` (set before
+  `import cognee`) disables multi-tenant auth so scripts run without a user/session.
+- **remember = add() + cognify()** — each ADR/PR/Slack doc is added separately and
+  tagged with its source type so cognify extracts cross-document edges. (Typed edges
+  are an extraction outcome to *verify*, not assume — see SPINE-1.)
+- **recall = search(query_type=GRAPH_COMPLETION)** — `only_context=True` returns the raw
+  retrieved graph context (no LLM answer), which is the honest before/after measure.
+- **forget = cognee.forget(dataset=...)** — note the kwarg is `dataset`, not
+  `dataset_name`. Dataset-level forget proves SPINE-2 on Day 1; Day 4 swaps to
+  node-level retire (active → retired) for the PR-flip demo.
+
+## Verified Cognee 1.2.2 API notes (don't guess these)
+
+- Both V1 (`add`/`cognify`/`search`) and V2 (`remember`/`recall`/`forget`/`improve`/`memify`) exist.
+- `forget(*, data_id=, dataset=, dataset_id=, everything=, memory_only=, user=)` — keyword-only.
+- `SearchType` members include `GRAPH_COMPLETION`, `TRIPLET_COMPLETION`, `CYPHER`,
+  `RAG_COMPLETION`, `TEMPORAL` — **there is no `INSIGHTS`**.
+- Ollama embeddings require `transformers` (HuggingFace tokenizer) — in requirements.
 
 ## The one contradiction type (corpus)
 
-email_service → async via Redis/Celery (ADR-001, PR #42).
+`email_service` → async via Redis/Celery (ADR-001, PR #42).
 Detection target: a PR that makes email sending synchronous again.
-Multi-hop evidence chain: PRRecord --[reverses]--> EngineeringDecision --[justified_by]--> ArchitecturalReason
+Multi-hop evidence chain: `PRRecord --[reverses]--> EngineeringDecision --[justified_by]--> ArchitecturalReason`.
 Source types crossed: PR diff (incoming) + ADR (corpus) + Slack (corpus) = ≥2 hops, ≥2 source types.
-This is the SPINE-1 proof: vector-only search on the PR diff alone cannot reach the Slack rationale.
+SPINE-1 proof: vector-only search on the PR diff alone cannot reach the Slack rationale.
+
+## AI tool disclosure (hackathon rule)
+
+Built with assistance from Claude (Claude Code). Must be disclosed in the final submission.

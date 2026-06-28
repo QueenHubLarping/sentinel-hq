@@ -1,1 +1,13 @@
-.env*
+# Python
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Local secrets / config — keep the template tracked
+.env
+.env.local
+
+# Cognee local data stores (self-hosted graph + vector + relational)
+.cognee/
+.cognee_system/
