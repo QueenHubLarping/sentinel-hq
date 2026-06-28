@@ -20,7 +20,7 @@ import re
 
 import cognee
 
-from sentinel.ingest import CORPUS_DIR, DATASET_NAME, corpus_file_data_id
+from sentinel.ingest import DATASET_NAME, adr_dir, corpus_file_data_id
 
 
 def _adr_number(decision_reference: str) -> str | None:
@@ -57,17 +57,19 @@ async def mark_intentional(decision_reference: str = "") -> dict:
             ),
         }
 
-    # Locate matching ADR files in the corpus (e.g. "ADR-001-async-email.md").
-    adr_dir = CORPUS_DIR / "adrs"
-    matches = sorted(adr_dir.glob(f"{adr_id}*.md"))
+    # Locate matching ADR files (e.g. "ADR-001-async-email.md") in the same
+    # directory ingest read them from — the consuming repo's docs/adr when running
+    # in CI, else the bundled corpus.
+    adr_path = adr_dir()
+    matches = sorted(adr_path.glob(f"{adr_id}*.md"))
     if not matches:
         return {
             "status": "not_found",
             "decision": decision_reference,
             "adr_id": adr_id,
             "note": (
-                f"No corpus file found matching '{adr_id}*.md' in {adr_dir}. "
-                "Re-run ingest if the corpus was recently changed."
+                f"No ADR file found matching '{adr_id}*.md' in {adr_path}. "
+                "Re-run ingest if the ADRs were recently changed."
             ),
         }
 

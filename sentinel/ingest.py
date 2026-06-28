@@ -16,6 +16,7 @@ corpus/
   prs/    — PR metadata                      (source_type: PR)
 """
 
+import os
 import re
 from pathlib import Path
 from uuid import UUID, uuid5
@@ -25,8 +26,6 @@ from cognee.tasks.ingestion.data_item import DataItem
 
 CORPUS_DIR = Path(__file__).parent.parent / "corpus"
 DATASET_NAME = "sentinel_decisions"
-
-_SUBDIR_TO_TYPE = {"adrs": "ADR", "slack": "Slack", "prs": "PR"}
 
 # Fixed namespace so data_ids are stable across runs — lets resolve.py do
 # selective forget by data_id without querying the DB each time.
@@ -38,9 +37,44 @@ def corpus_file_data_id(filename: str) -> UUID:
     return uuid5(_SENTINEL_NS, filename)
 
 
+def adr_dir() -> Path:
+    """Resolve the directory Sentinel reads ADRs from.
+
+    ADRs are the one source that lives in the *consuming* repository, so the team
+    edits them where they work — not inside Sentinel. Resolution order:
+
+      1. SENTINEL_ADR_DIR        — explicit override (set in a workflow if ADRs
+                                   live somewhere other than docs/adr).
+      2. $GITHUB_WORKSPACE/docs/adr — the checked-out repo when running inside a
+                                   GitHub Action (e.g. sentinel-test-repo).
+      3. corpus/adrs             — the bundled demo corpus (local dev / tests).
+
+    data_ids derive from the file *basename* (see corpus_file_data_id), so a given
+    ADR keeps a stable id regardless of which directory it was read from — selective
+    forget in resolve.py keeps working across this switch.
+    """
+    explicit = os.environ.get("SENTINEL_ADR_DIR")
+    if explicit and Path(explicit).is_dir():
+        return Path(explicit)
+
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        repo_adrs = Path(workspace) / "docs" / "adr"
+        if repo_adrs.is_dir():
+            return repo_adrs
+
+    return CORPUS_DIR / "adrs"
+
+
 def _iter_corpus_files():
-    """Yield (path, source_type) for every markdown file in corpus/."""
-    for subdir, source_type in _SUBDIR_TO_TYPE.items():
+    """Yield (path, source_type) for every document Sentinel ingests.
+
+    ADRs come from the consuming repo (see adr_dir); Slack threads and historical PR
+    metadata still come from the bundled corpus until live connectors exist for them.
+    """
+    for path in sorted(adr_dir().glob("*.md")):
+        yield path, "ADR"
+    for subdir, source_type in (("slack", "Slack"), ("prs", "PR")):
         for path in sorted((CORPUS_DIR / subdir).glob("*.md")):
             yield path, source_type
 
