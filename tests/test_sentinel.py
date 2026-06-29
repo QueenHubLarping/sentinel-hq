@@ -7,13 +7,17 @@ import types
 
 import pytest
 
-from sentinel.comment import render_comment
+from sentinel.comment import render_comment, render_feedback_recorded
 from sentinel.detect import Verdict, _normalize_confidence, _recall_query
 from sentinel.improve import (
     DEFAULT_FEEDBACK_ALPHA,
     THUMBS_DOWN,
     THUMBS_UP,
     _element_ids,
+    dismissed_file,
+    feedback_signature,
+    file_dismissed_signatures,
+    record_noise_file,
 )
 from sentinel.ingest import corpus_file_data_id
 from sentinel.resolve import _adr_number
@@ -199,3 +203,81 @@ def test_recall_query_truncates_long_pr_text():
     q = _recall_query(long_text)
     # PR text is capped at 800 chars in the query body.
     assert q.count("x") == 800
+
+
+# ---------------------------------------------------------------------------
+# improve — feedback_signature (the drift key) + suppression rendering
+# ---------------------------------------------------------------------------
+
+def test_feedback_signature_adr_collapses_to_canonical_id():
+    assert feedback_signature("ADR-001 (async email)") == "ADR-001"
+    assert feedback_signature("adr-3 something") == "ADR-003"
+
+
+def test_feedback_signature_non_adr_slugifies():
+    assert feedback_signature("Inline retry helper") == "inline-retry-helper"
+    assert feedback_signature("") == "unknown"
+
+
+def test_feedback_signature_stable():
+    assert feedback_signature("ADR-001 (x)") == feedback_signature("ADR-001 something else")
+
+
+def test_should_flag_true_when_reversal_not_suppressed():
+    v = Verdict(analysis="x", reverses_decision=True, decision_reference="ADR-001")
+    assert v.should_flag is True
+
+
+def test_should_flag_false_when_suppressed_by_feedback():
+    v = Verdict(
+        analysis="x", reverses_decision=True, decision_reference="ADR-001",
+        suppressed_by_feedback=True,
+    )
+    assert v.should_flag is False
+
+
+def test_should_flag_false_when_no_reversal():
+    v = Verdict(analysis="x", reverses_decision=False)
+    assert v.should_flag is False
+
+
+# ---------------------------------------------------------------------------
+# render_comment — suppressed (muted-by-feedback) branch
+# ---------------------------------------------------------------------------
+
+def test_render_comment_suppressed_is_quiet_note():
+    v = Verdict(
+        analysis="reverses async email", reverses_decision=True,
+        decision_reference="ADR-001 (async email)", suppressed_by_feedback=True,
+    )
+    comment = render_comment(v)
+    assert "🔕" in comment
+    assert "muted" in comment.lower()
+    assert "ADR-001" in comment
+    # A muted flag must NOT render the loud CAUTION card.
+    assert "[!CAUTION]" not in comment
+
+
+def test_render_feedback_recorded_confirms_drift():
+    comment = render_feedback_recorded("ADR-001", 57)
+    assert "👎" in comment
+    assert "ADR-001" in comment
+    assert "#57" in comment
+
+
+# ---------------------------------------------------------------------------
+# improve — durable dismissal file (the CI-safe store)
+# ---------------------------------------------------------------------------
+
+def test_dismissal_file_roundtrip_and_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENTINEL_ADR_DIR", str(tmp_path))
+    assert file_dismissed_signatures() == set()
+
+    record_noise_file("ADR-001 (async email)")
+    record_noise_file("ADR-001 something else")  # same signature — idempotent
+    record_noise_file("ADR-003 (rate limiting)")
+
+    assert file_dismissed_signatures() == {"ADR-001", "ADR-003"}
+    # One entry per signature despite the repeated dismissal.
+    body = dismissed_file().read_text(encoding="utf-8")
+    assert body.count("ADR-001") == 1

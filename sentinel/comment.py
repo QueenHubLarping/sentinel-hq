@@ -50,7 +50,10 @@ def _footer(tagline: str) -> str:
 
 
 def render_comment(verdict: Verdict) -> str:
-    """Markdown comment for a PR: the ⚠️ reversal card, or a calm clean-bill note."""
+    """Markdown comment for a PR: the ⚠️ reversal card, the muted-by-feedback note, or
+    a calm clean-bill note."""
+    if verdict.reverses_decision and verdict.suppressed_by_feedback:
+        return render_suppressed(verdict)
     if not verdict.reverses_decision:
         return "\n".join([
             "> [!NOTE]",
@@ -107,11 +110,58 @@ def render_comment(verdict: Verdict) -> str:
         "|:--|:--|",
         "| ✅ **Yes, it's deliberate** | Comment `/sentinel intentional` — I'll record the superseding decision, retire "
         f"{ref}, and stop flagging this. |",
+        "| 👎 **This flag isn't useful** | Comment `/sentinel noise` — I'll learn this drift is noise and stop raising it. |",
         "| 🔄 **No / not sure** | Please reconsider — the original reasoning above may still hold. |",
         "",
         _footer("catches PRs that silently reverse past decisions"),
     ]
     return "\n".join(lines)
+
+
+def render_suppressed(verdict: Verdict) -> str:
+    """The calm note shown when a reversal is real but the team muted it via '/sentinel noise'.
+
+    Honest by design: Sentinel still *detected* the reversal — it's just respecting the
+    team's earlier 👎 and staying quiet, and it says so.
+    """
+    ref = verdict.decision_reference or "a past decision"
+    return "\n".join([
+        "> [!NOTE]",
+        "> ## 🔕 Sentinel — staying quiet (you muted this)",
+        ">",
+        f"> This change does reverse **{ref}**, but the team previously marked this drift as "
+        "noise via `/sentinel noise`, so Sentinel isn't raising it.",
+        "",
+        f"{_sentinel_badge()} ![muted]({_badge('flag', 'muted by feedback', '6e7781')})",
+        "",
+        "> _Changed your mind? Re-enable it any time and Sentinel will flag this drift again._",
+        "",
+        _footer("improve loop · learns which flags to stop raising"),
+    ])
+
+
+def render_feedback_recorded(decision_reference: str, pr_number: int | None = None) -> str:
+    """The ✅ confirmation posted after '/sentinel noise' records the 👎 (the improve loop)."""
+    ref = decision_reference or "this drift"
+    where = f" in #{pr_number}" if pr_number else ""
+    return "\n".join([
+        "> [!TIP]",
+        "> ## 👎 Got it — Sentinel learned this flag was noise",
+        ">",
+        f"> You marked the **{ref}** reversal flag as unhelpful{where}, so Sentinel wrote that "
+        "into its memory and won't raise this drift again.",
+        "",
+        f"{_sentinel_badge()} ![improved]({_badge('memory', 'feedback recorded', '7c3aed')})",
+        "",
+        "What I just did:",
+        "",
+        f"- 🧠 Stored a 👎 feedback record for **{ref}** in the decision graph",
+        "- 🔕 Suppressed this drift from future recall (live — next run reads it)",
+        "",
+        "> _The improve loop: detective, not nag — it learns which flags you don't want._",
+        "",
+        _footer("improve loop · feedback recorded"),
+    ])
 
 
 def render_resolution(decision_reference: str, pr_number: int | None = None) -> str:

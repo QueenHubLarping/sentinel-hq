@@ -34,7 +34,20 @@ Runtime requirements (the Day-4 script sets these *before* importing cognee):
 
 These differ from the forget demo (which runs ``CACHING=false`` so deletions show in
 recall immediately), so the Improve phase is exercised by its own script.
+
+----------------------------------------------------------------------------------------
+Two surfaces, one verb. The native re-weighting above is the on-screen proof
+(scripts/day4_improve.py, CACHING=true). The GitHub Action runs in a different context —
+ephemeral runners with no persistent session cache between the detect run and the
+'/sentinel noise' run — so the live loop records the 👎 as a durable, git-committed
+dismissal instead (the "Durable dismissal store" section at the bottom of this file),
+which the next detection reads. Same intent (the team's 👎 reshapes the next recall),
+two transports for two runtimes.
 """
+
+import re
+from pathlib import Path
+from uuid import uuid5
 
 import cognee
 
@@ -192,3 +205,135 @@ async def reinforce(
     return await _act_on_flag(
         session_id, score=THUMBS_UP, note=note, alpha=alpha, dataset=dataset
     )
+
+
+# ===========================================================================
+# Durable dismissal store — the Action-side transport of the SAME 👎 intent.
+# ===========================================================================
+# The native re-weighting above needs a live session cache (CACHING=true) and a
+# persistent graph, which the ephemeral GitHub runner doesn't have between the detect
+# run and the '/sentinel noise' run. So in CI the 👎 is recorded as a drift signature
+# committed to the consuming repo (mirroring how forget commits the ADR supersession),
+# which the next detection reads. is_dismissed feeds detect.detect_reversal's
+# suppressed_by_feedback. Local dev has no GITHUB_WORKSPACE and can also keep the
+# signature in the graph via a marker (graph_dismissed_signatures).
+
+from cognee.tasks.ingestion.data_item import DataItem  # noqa: E402
+from sentinel.ingest import _SENTINEL_NS, adr_dir  # noqa: E402
+from sentinel.resolve import _adr_number  # noqa: E402
+
+FEEDBACK_NODE_SET = "sentinel_feedback"
+
+# Distinctive, machine-parseable marker so dismissals can be found deterministically
+# in the graph (a substring scan over node data), independent of LLM recall.
+_MARKER = "SENTINEL-DISMISSED-DRIFT"
+_MARKER_RE = re.compile(rf"{_MARKER}:\s*([A-Za-z0-9\-]+)")
+
+
+def feedback_signature(decision_reference: str) -> str:
+    """Normalize a decision reference into a stable drift signature (the feedback key).
+
+    ADR references collapse to their canonical id ('ADR-001 (async email)' -> 'ADR-001');
+    anything else is slugified so it is still a stable, comparable key.
+    """
+    adr = _adr_number(decision_reference)
+    if adr:
+        return adr
+    slug = re.sub(r"[^a-z0-9]+", "-", (decision_reference or "").lower()).strip("-")
+    return slug or "unknown"
+
+
+def _feedback_doc(signature: str, decision_reference: str, pr_number: int | None, note: str) -> str:
+    where = f" on PR #{pr_number}" if pr_number else ""
+    body = (
+        f"[source_type: SentinelFeedback] [{_MARKER}: {signature}]\n\n"
+        f"# Team feedback: the '{signature}' reversal flag was dismissed as noise\n\n"
+        f"A maintainer reviewed Sentinel's flag that a change reverses **{decision_reference}**"
+        f"{where} and marked it as NOISE — an unhelpful false-positive drift pattern, not an "
+        f"intentional override of the decision. Per this team feedback, Sentinel should NOT "
+        f"raise the '{signature}' reversal again.\n"
+    )
+    if note:
+        body += f"\nMaintainer note: {note}\n"
+    return body
+
+
+async def record_noise(decision_reference: str, pr_number: int | None = None, note: str = "") -> dict:
+    """Write a 👎 into the graph: dismiss the *decision_reference* drift as noise (improve).
+
+    Idempotent — repeated dismissals of the same drift reuse a stable data_id, so a
+    second ``/sentinel noise`` just refreshes the existing feedback record. Used by the
+    local proof; the Action uses record_noise_file (durable on ephemeral runners).
+    """
+    signature = feedback_signature(decision_reference)
+    doc = _feedback_doc(signature, decision_reference, pr_number, note)
+    data_id = uuid5(_SENTINEL_NS, f"feedback::{signature}")
+
+    item = DataItem(data=doc, label=f"feedback-{signature}.md", data_id=data_id)
+    await cognee.add(item, dataset_name=DATASET_NAME, node_set=[FEEDBACK_NODE_SET])
+    await cognee.cognify(datasets=[DATASET_NAME])
+
+    # Also invoke the native verb where supported — it weights feedback into recall.
+    # Non-fatal: the deterministic marker scan is what guarantees the suppression.
+    try:
+        await cognee.improve(DATASET_NAME)
+    except Exception:
+        pass
+
+    return {"status": "recorded", "signature": signature, "decision": decision_reference}
+
+
+async def graph_dismissed_signatures() -> set[str]:
+    """Drift signatures dismissed *in the graph* — a deterministic marker scan.
+
+    This is what powers the local before/after proof (the graph persists between runs
+    on a dev box), and does not depend on the LLM surfacing the feedback node.
+    """
+    from cognee.infrastructure.databases.graph import get_graph_engine
+
+    nodes, _ = await (await get_graph_engine()).get_graph_data()
+    found: set[str] = set()
+    for node in nodes:
+        for m in _MARKER_RE.finditer(str(node)):
+            found.add(m.group(1))
+    return found
+
+
+def dismissed_file() -> Path:
+    """Path to the durable dismissal store, next to the ADRs Sentinel reads."""
+    return adr_dir() / ".sentinel-dismissed"
+
+
+def file_dismissed_signatures() -> set[str]:
+    """Drift signatures dismissed in the committed file (empty if the file is absent)."""
+    path = dismissed_file()
+    if not path.exists():
+        return set()
+    return {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
+def record_noise_file(decision_reference: str) -> Path:
+    """Append this drift's signature to the durable dismissal file (idempotent)."""
+    signature = feedback_signature(decision_reference)
+    path = dismissed_file()
+    existing = file_dismissed_signatures()
+    if signature not in existing:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        header = "" if path.exists() else "# Drift signatures the team dismissed via '/sentinel noise'.\n"
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{header}{signature}\n")
+    return path
+
+
+async def dismissed_signatures() -> set[str]:
+    """All dismissed drift signatures: the durable file (CI) ∪ the graph (local)."""
+    return file_dismissed_signatures() | await graph_dismissed_signatures()
+
+
+async def is_dismissed(decision_reference: str) -> bool:
+    """True if the team has marked this decision's drift as noise (👎)."""
+    return feedback_signature(decision_reference) in await dismissed_signatures()

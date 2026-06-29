@@ -52,6 +52,16 @@ class Verdict(BaseModel):
     confidence: float = Field(
         default=0.0, description="Confidence 0.0-1.0 that this is a genuine reversal."
     )
+    suppressed_by_feedback: bool = Field(
+        default=False,
+        description="(system-managed — always leave false) set by Sentinel when the team "
+        "previously dismissed this drift via '/sentinel noise'.",
+    )
+
+    @property
+    def should_flag(self) -> bool:
+        """Whether Sentinel actually surfaces this: a reversal the team hasn't muted."""
+        return self.reverses_decision and not self.suppressed_by_feedback
 
 
 _SYSTEM_PROMPT = """You are Sentinel, an institutional-memory guardian for a codebase.
@@ -199,5 +209,14 @@ async def detect_reversal(
             bool(x) for x in (verdict.decision_reference, verdict.original_reasoning, verdict.impact_if_merged)
         )
         verdict.confidence = round(0.5 + 0.15 * filled, 2)  # 0.65–0.95
+
+    # improve: if the team previously dismissed this drift as noise ('/sentinel noise'),
+    # the flag is muted. The judgment stays honest (reverses_decision is unchanged); we
+    # only suppress surfacing it. Read live from the graph, so it changes the next run.
+    verdict.suppressed_by_feedback = False
+    if verdict.reverses_decision and verdict.decision_reference:
+        from sentinel.improve import is_dismissed
+
+        verdict.suppressed_by_feedback = await is_dismissed(verdict.decision_reference)
 
     return verdict
