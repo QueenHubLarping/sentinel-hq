@@ -98,18 +98,59 @@ impact_if_merged="reintroduces the latency ADR-007 removed", confidence=0.9.
 """
 
 
-async def _recall_context(pr_text: str) -> str:
+def _recall_query(pr_text: str) -> str:
+    """The recall question Sentinel asks the graph for an incoming change.
+
+    Factored out so the Improve phase can replay the *identical* query inside a
+    session — guaranteeing its 👎 feedback lands on the same graph nodes/edges that
+    produced the flag.
+    """
+    return (
+        "What past engineering decision relates to the following change, and what was the "
+        f"reasoning behind it? Quote specifics.\n\nChange:\n{pr_text[:800]}"
+    )
+
+
+async def _recall_context(
+    pr_text: str,
+    *,
+    session_id: str | None = None,
+    feedback_influence: float | None = None,
+    top_k: int | None = None,
+) -> str:
     """Pull the relevant decision(s) for this PR as a coherent summary (decision + why).
 
     A GRAPH_COMPLETION answer is more robust judge input than the raw only_context blob,
     whose shape varies between cognify builds. We also include the raw context as backup.
+
+    Improve-phase knobs (all optional; defaults preserve the original behavior):
+      session_id         — record the completion search as a Cognee session Q&A entry, so
+                           the Improve phase can attach 👍/👎 feedback to the exact graph
+                           elements it used (see sentinel.improve).
+      feedback_influence — weight (0..1) the retriever gives to learned feedback when
+                           ranking triplets; >0 makes earlier 👎 down-rank that memory.
+      top_k              — cap on retrieved triplets (tighter cap = sharper suppression).
     """
-    question = (
-        "What past engineering decision relates to the following change, and what was the "
-        f"reasoning behind it? Quote specifics.\n\nChange:\n{pr_text[:800]}"
+    question = _recall_query(pr_text)
+
+    # Build kwargs lazily so an unconfigured call hits cognee.search with its own
+    # defaults — keeping day2/day3 detection byte-for-byte unchanged.
+    tuning: dict = {}
+    if feedback_influence is not None:
+        tuning["feedback_influence"] = feedback_influence
+    if top_k is not None:
+        tuning["top_k"] = top_k
+
+    # Only the completion search runs inside the session: it is the one that records
+    # used_graph_element_ids. The only_context probe stays session-less so it never adds
+    # a second, answer-less Q&A entry that would muddy which recall the feedback targets.
+    answer = await cognee.search(
+        question,
+        query_type=GC,
+        **({"session_id": session_id} if session_id else {}),
+        **tuning,
     )
-    answer = await cognee.search(question, query_type=GC)
-    raw = await cognee.search(question, query_type=GC, only_context=True)
+    raw = await cognee.search(question, query_type=GC, only_context=True, **tuning)
     return (" ".join(str(r) for r in answer) if answer else "") + "\n\n" + str(raw)
 
 
@@ -121,12 +162,31 @@ def _normalize_confidence(c: float) -> float:
     return max(0.0, min(1.0, c / 100.0 if c > 1.0 else c))
 
 
-async def detect_reversal(pr_text: str, retrieval_query: str | None = None) -> Verdict:
-    """Run the recall→judge loop on an incoming PR and return a structured Verdict."""
+async def detect_reversal(
+    pr_text: str,
+    retrieval_query: str | None = None,
+    *,
+    session_id: str | None = None,
+    feedback_influence: float | None = None,
+    top_k: int | None = None,
+) -> Verdict:
+    """Run the recall→judge loop on an incoming PR and return a structured Verdict.
+
+    The optional session_id / feedback_influence / top_k flow straight through to recall
+    (see _recall_context). With them, detection becomes the front half of the Improve
+    loop: pass a session_id so the flag's recall is recorded, and feedback_influence>0 so a
+    later 👎 (via sentinel.improve) actually suppresses the next detection. Omit them and
+    detection behaves exactly as in Day 2/3.
+    """
     from cognee.infrastructure.llm.LLMGateway import LLMGateway
 
     # 1. recall — what past decisions does this change touch?
-    context = await _recall_context(retrieval_query or pr_text)
+    context = await _recall_context(
+        retrieval_query or pr_text,
+        session_id=session_id,
+        feedback_influence=feedback_influence,
+        top_k=top_k,
+    )
 
     # 2. judge — grounded strictly in the retrieved context
     judge_input = (

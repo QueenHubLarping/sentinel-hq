@@ -3,11 +3,17 @@
 Run with:  pip install pytest && pytest tests/
 """
 
+import types
+
 import pytest
 
 from sentinel.comment import render_comment, render_feedback_recorded
-from sentinel.detect import Verdict, _normalize_confidence
+from sentinel.detect import Verdict, _normalize_confidence, _recall_query
 from sentinel.improve import (
+    DEFAULT_FEEDBACK_ALPHA,
+    THUMBS_DOWN,
+    THUMBS_UP,
+    _element_ids,
     dismissed_file,
     feedback_signature,
     file_dismissed_signatures,
@@ -133,6 +139,70 @@ def test_adr_number_no_match_returns_none():
     assert _adr_number("some unrelated string") is None
     assert _adr_number("") is None
     assert _adr_number("ADDR-001") is None   # double-D should not match
+
+
+# ---------------------------------------------------------------------------
+# Improve phase — feedback score constants + alpha (map to Cognee's rating space)
+# ---------------------------------------------------------------------------
+
+def test_thumbs_scores_are_extremes_of_cognee_range():
+    # Cognee normalizes score via (score-1)/4: THUMBS_DOWN -> 0.0, THUMBS_UP -> 1.0.
+    assert THUMBS_DOWN == 1
+    assert THUMBS_UP == 5
+    assert (THUMBS_DOWN - 1) / 4 == 0.0
+    assert (THUMBS_UP - 1) / 4 == 1.0
+
+
+def test_default_feedback_alpha_in_valid_range():
+    # Cognee requires the streaming-update alpha in (0, 1].
+    assert 0.0 < DEFAULT_FEEDBACK_ALPHA <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# _element_ids  (pulls node_ids / edge_ids off a session Q&A entry, fault-tolerant)
+# ---------------------------------------------------------------------------
+
+def _qa(used):
+    return types.SimpleNamespace(used_graph_element_ids=used)
+
+
+def test_element_ids_extracts_lists():
+    qa = _qa({"node_ids": ["n1", "n2"], "edge_ids": ["e1"]})
+    assert _element_ids(qa, "node_ids") == ["n1", "n2"]
+    assert _element_ids(qa, "edge_ids") == ["e1"]
+
+
+def test_element_ids_missing_key_returns_empty():
+    assert _element_ids(_qa({"node_ids": ["n1"]}), "edge_ids") == []
+
+
+def test_element_ids_handles_none_and_bad_shapes():
+    assert _element_ids(_qa(None), "node_ids") == []
+    assert _element_ids(_qa({}), "node_ids") == []
+    assert _element_ids(_qa({"node_ids": "n1"}), "node_ids") == []  # not a list
+    assert _element_ids(types.SimpleNamespace(), "node_ids") == []  # attr absent
+
+
+def test_element_ids_drops_non_string_entries():
+    qa = _qa({"node_ids": ["n1", 7, None, "n2"]})
+    assert _element_ids(qa, "node_ids") == ["n1", "n2"]
+
+
+# ---------------------------------------------------------------------------
+# _recall_query  (the shared recall question — Improve replays it verbatim)
+# ---------------------------------------------------------------------------
+
+def test_recall_query_embeds_change_text():
+    q = _recall_query("make checkout email synchronous")
+    assert "make checkout email synchronous" in q
+    assert "reasoning" in q.lower()
+
+
+def test_recall_query_truncates_long_pr_text():
+    long_text = "x" * 5000
+    q = _recall_query(long_text)
+    # PR text is capped at 800 chars in the query body.
+    assert q.count("x") == 800
 
 
 # ---------------------------------------------------------------------------

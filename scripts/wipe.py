@@ -67,7 +67,7 @@ async def main() -> None:
     print("Step 2: cognee relational / metadata prune")
     await _wipe_relational()
 
-    print("\nDone — run day3_flip.py to rebuild from scratch.")
+    print("\nDone")
 
 
 if __name__ == "__main__":
