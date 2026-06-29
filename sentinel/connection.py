@@ -36,6 +36,14 @@ _DEFAULTS = {
 for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
 
+# Cognee validates the LLM env at IMPORT time (cognee.shared.rate_limiting builds
+# LLMConfig on import, before setup_cognee() runs) and requires LLM_API_KEY to be
+# present and non-empty whenever LLM_MODEL/LLM_ENDPOINT are set — even for Ollama. The
+# GitHub Action passes an empty LLM_API_KEY in local mode, so inject a placeholder here
+# (this module is imported before `import cognee`). Real keys (Groq) are left untouched.
+if os.environ.get("LLM_PROVIDER") == "ollama" and not os.environ.get("LLM_API_KEY"):
+    os.environ["LLM_API_KEY"] = "ollama"
+
 
 async def setup_cognee() -> None:
     """Apply the LLM + Ollama-embeddings config and fail fast on missing dependencies.

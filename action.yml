@@ -59,8 +59,9 @@ runs:
         LLM_MODEL: ${{ inputs.llm-model }}
         LLM_ENDPOINT: ${{ inputs.llm-endpoint }}
         LLM_INSTRUCTOR_MODE: ${{ inputs.llm-instructor-mode }}
-        # Dummy for local Ollama; the real key (Groq) is read from groq-api-key.
-        LLM_API_KEY: ${{ inputs.groq-api-key }}
+        # cognee requires LLM_API_KEY present at import even for Ollama; fall back to a
+        # placeholder when no real (Groq) key is supplied.
+        LLM_API_KEY: ${{ inputs.groq-api-key || 'ollama' }}
         GROQ_API_KEY: ${{ inputs.groq-api-key }}
       run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
 
