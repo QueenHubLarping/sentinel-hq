@@ -19,26 +19,31 @@ inputs:
     default: ${{ github.token }}
   # ── LLM posture ──────────────────────────────────────────────────────────
   # Default: fully local reasoning via Ollama on the self-hosted runner — no API
-  # key, no rate limits, nothing leaves the box. Set llm-provider=custom +
-  # groq-api-key to use Groq cloud instead.
+  # key, no rate limits, nothing leaves the box. To use a hosted LLM instead set
+  # llm-provider (openai for OpenAI; custom for Groq cloud) + llm-api-key.
+  # Embeddings stay local (Ollama nomic-embed-text) regardless of llm-provider.
   llm-provider:
-    description: "ollama (local, default) or custom (e.g. Groq cloud)"
+    description: "ollama (local, default), openai (OpenAI cloud), or custom (e.g. Groq cloud)"
     required: false
     default: "ollama"
   llm-model:
-    description: "Reasoning model (ollama: e.g. qwen2.5:3b; Groq: groq/llama-3.3-70b-versatile)"
+    description: "Reasoning model (ollama: e.g. qwen2.5:3b; openai: gpt-4o-mini; Groq: groq/llama-3.3-70b-versatile)"
     required: false
     default: "qwen2.5:3b"
   llm-endpoint:
-    description: "LLM endpoint (local Ollama OpenAI-compatible API by default)"
+    description: "LLM endpoint (local Ollama OpenAI-compatible API by default; ignored for openai)"
     required: false
     default: "http://localhost:11434/v1"
   llm-instructor-mode:
     description: "Instructor mode for structured output; json_schema_mode is required for small local models"
     required: false
     default: "json_schema_mode"
+  llm-api-key:
+    description: "API key for a hosted llm-provider (OpenAI/Groq). Leave empty for local ollama."
+    required: false
+    default: ""
   groq-api-key:
-    description: "Groq API key — only needed when llm-provider=custom (Groq cloud)"
+    description: "Deprecated alias for llm-api-key (Groq cloud). Prefer llm-api-key."
     required: false
     default: ""
 
@@ -60,8 +65,8 @@ runs:
         LLM_ENDPOINT: ${{ inputs.llm-endpoint }}
         LLM_INSTRUCTOR_MODE: ${{ inputs.llm-instructor-mode }}
         # cognee requires LLM_API_KEY present at import even for Ollama; fall back to a
-        # placeholder when no real (Groq) key is supplied.
-        LLM_API_KEY: ${{ inputs.groq-api-key || 'ollama' }}
+        # placeholder when no real (OpenAI/Groq) key is supplied.
+        LLM_API_KEY: ${{ inputs.llm-api-key || inputs.groq-api-key || 'ollama' }}
         GROQ_API_KEY: ${{ inputs.groq-api-key }}
       run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
 

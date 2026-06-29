@@ -48,9 +48,11 @@ if os.environ.get("LLM_PROVIDER") == "ollama" and not os.environ.get("LLM_API_KE
 async def setup_cognee() -> None:
     """Apply the LLM + Ollama-embeddings config and fail fast on missing dependencies.
 
-    Two LLM postures, selected by LLM_PROVIDER:
+    LLM postures, selected by LLM_PROVIDER (embeddings are always local Ollama):
       - ``ollama``  — fully local reasoning (no API key needed); the on-prem/self-hosted
         posture. A dummy LLM_API_KEY ("ollama") satisfies the client.
+      - ``openai``  — OpenAI cloud (e.g. gpt-4o-mini); needs a real key in LLM_API_KEY.
+        Uses OpenAI's own endpoint, so any local LLM_ENDPOINT is ignored.
       - anything else (e.g. ``custom`` for Groq) — needs a real key in LLM_API_KEY/GROQ_API_KEY.
     """
     import cognee
@@ -63,12 +65,14 @@ async def setup_cognee() -> None:
         if not api_key:
             raise RuntimeError(
                 f"LLM API key is missing for provider '{provider}'. "
-                "Set GROQ_API_KEY (or LLM_API_KEY), or use LLM_PROVIDER=ollama for local reasoning."
+                "Set llm-api-key (LLM_API_KEY), or use LLM_PROVIDER=ollama for local reasoning."
             )
 
     cognee.config.set_llm_provider(provider)
     cognee.config.set_llm_model(os.environ["LLM_MODEL"])
-    if os.environ.get("LLM_ENDPOINT"):
+    # OpenAI must hit api.openai.com, not the local Ollama endpoint the Action passes by
+    # default — only set a custom endpoint for non-openai providers (ollama/custom/Groq).
+    if provider != "openai" and os.environ.get("LLM_ENDPOINT"):
         cognee.config.set_llm_endpoint(os.environ["LLM_ENDPOINT"])
     cognee.config.set_llm_api_key(api_key)
 
