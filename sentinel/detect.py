@@ -18,6 +18,11 @@ import cognee
 
 GC = cognee.SearchType.GRAPH_COMPLETION
 
+# Caps on the judge prompt — keep it small so CPU inference stays fast (prompt
+# processing dominates latency on a self-hosted runner without a GPU).
+_PR_CHAR_CAP = 2500
+_CONTEXT_CHAR_CAP = 3500
+
 
 class Verdict(BaseModel):
     """Structured judgment about whether a PR reverses a past decision.
@@ -188,10 +193,14 @@ async def detect_reversal(
         top_k=top_k,
     )
 
-    # 2. judge — grounded strictly in the retrieved context
+    # 2. judge — grounded strictly in the retrieved context.
+    # Cap both inputs: CPU prompt-processing is the dominant cost on a self-hosted
+    # runner (~10 tok/s for a 7B), so a 4k-token prompt is minutes of latency before
+    # generation even starts. The GRAPH_COMPLETION answer (which leads `context`) holds
+    # the decision+why; trimming the raw blob tail keeps the signal and slashes latency.
     judge_input = (
-        f"=== INCOMING PULL REQUEST ===\n{pr_text}\n\n"
-        f"=== MEMORY CONTEXT (past decisions + reasoning) ===\n{context}\n"
+        f"=== INCOMING PULL REQUEST ===\n{pr_text[:_PR_CHAR_CAP]}\n\n"
+        f"=== MEMORY CONTEXT (past decisions + reasoning) ===\n{context[:_CONTEXT_CHAR_CAP]}\n"
     )
     verdict = await LLMGateway.acreate_structured_output(
         text_input=judge_input,
