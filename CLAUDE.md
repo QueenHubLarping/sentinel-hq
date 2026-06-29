@@ -61,8 +61,9 @@ sentinel/
   detect.py           — recall + judge phase: graph search → Groq Verdict (Pydantic model)
                         (recall takes optional session_id/feedback_influence for the improve loop)
   resolve.py          — forget phase: mark_intentional() → supersede ADR + cognee.forget()
-  improve.py          — improve phase: session feedback (👍/👎) → cognee.improve() re-weights
-                        the exact graph nodes/edges a flag used (feedback_weight 0.5↔0/1)
+  improve.py          — improve phase: session feedback (👍/👎) → cognee.improve() gently
+                        re-weights the graph nodes/edges a flag used (nudges feedback_weight,
+                        does NOT erase — that's forget)
   comment.py          — render GitHub PR comments (reversal card or clean-bill)
   github_pr.py        — GitHub REST helpers, event payload parsing, commit/push
 
@@ -119,16 +120,17 @@ graph_after.html        — Day 3 output: vis.js knowledge graph after forget
   (`**Status:** Superseded`) and then forgets from graph. Next ingest skips superseded
   files, making forget durable without managing graph persistence.
 - **improve = session feedback → cognee.improve()** (`sentinel/improve.py`). Distinct from
-  forget: forget *retires* an overturned decision; improve *re-ranks* memory the team
-  considers noise, deleting nothing. Loop: (1) detection recall runs inside a Cognee
-  *session* (`search(session_id=...)`) so Cognee records the exact `used_graph_element_ids`
-  that produced the flag; (2) a maintainer 👎 is stored via `cognee.session.add_feedback`
-  (score 1=suppress … 5=reinforce); (3) `cognee.improve(dataset=…, session_ids=[…],
-  feedback_alpha=1.0)` streams that score onto those nodes/edges' `feedback_weight`
-  (0.5 baseline → ~0.0 on a 👎); (4) the next recall, run with `feedback_influence>0`,
-  gives down-weighted triplets a larger effective distance so they fall out of top-k and
-  stop reaching the judge. Honest because the weights live on the graph and are consumed by
-  Cognee's own triplet ranker — the suppression is a real graph mutation, not a side table.
+  forget: forget *erases* an overturned decision (the doc is gone); improve only *re-weights*
+  memory so it ranks differently — deleting nothing, the decision stays. Loop: (1) detection
+  recall runs inside a Cognee *session* (`search(session_id=...)`) so Cognee records the exact
+  `used_graph_element_ids` that produced the flag; (2) a maintainer 👎 is stored via
+  `cognee.session.add_feedback` (score 1=down … 5=up); (3) `cognee.improve(dataset=…,
+  session_ids=[…], feedback_alpha=0.3)` nudges those nodes/edges' `feedback_weight` toward the
+  rating (`new = old + alpha*(rating-old)`; a gentle 0.5→~0.35 on a 👎, NOT 0.0 — that would
+  read as an erase); (4) the next recall, run with `feedback_influence>0`, gives down-weighted
+  triplets a larger effective distance so they rank lower and the retrieved answer shifts —
+  but the decision is not evicted/forgotten. Honest because the weights live on the graph and
+  are consumed by Cognee's own triplet ranker — a real graph mutation, not a side table.
 - **GitHub Action — advisory only** — Sentinel never fails the build. Dry-run mode
   writes to $GITHUB_STEP_SUMMARY; post mode comments on the PR. The `/sentinel
   intentional` reply triggers the issue_comment event path (checkout branch → supersede
@@ -144,9 +146,11 @@ graph_after.html        — Day 3 output: vis.js knowledge graph after forget
   (`pip install -r requirements.txt`; a bare cognee install does NOT pull it).
 - **improve() feedback loop** (verified from source, needed for `sentinel/improve.py`):
   - `improve(dataset=, *, session_ids=, feedback_alpha=0.1, ...)` — keyword `feedback_alpha`
-    is the streaming-update step (must be in `(0, 1]`); we use `1.0` for a decisive 0.5→0 move.
+    is the streaming-update step `new = old + alpha*(rating-old)` (must be in `(0, 1]`); we use
+    a gentle `0.3` so a 👎 nudges 0.5→~0.35 (a refinement, not an erase — alpha=1.0 would slam
+    it to 0.0 and read like forget).
   - `cognee.session.add_feedback(session_id=, qa_id=, feedback_text=, feedback_score=)` —
-    score is `1..5`, normalized to `(score-1)/4` (1→0.0 suppress, 5→1.0 reinforce).
+    score is `1..5`, normalized to `(score-1)/4` (1→0.0 down-weight, 5→1.0 up-weight).
     Get the `qa_id` from `cognee.session.get_session(session_id)` (latest entry).
   - **Requires the session cache**: with `CACHING=false` the SessionManager no-ops, so
     feedback is silently dropped. Default `CACHE_BACKEND=sqlite` (a `cache.db`; no Redis).

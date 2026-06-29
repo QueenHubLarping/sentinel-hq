@@ -14,7 +14,7 @@ Codebases remember *what* changed, never *why*. Months later someone opens a PR 
 2. **recall** — on each PR, multi-hop traverse the graph to find any decision the change contradicts, *and its rationale*.
 3. **comment** — if it reverses a past decision, Sentinel comments with the reasoning trail and asks "intentional?"
 4. **forget** — when the team confirms an intentional override, the old decision is retired (so the bot stops crying wolf).
-5. **improve** — a maintainer's 👎 on a flag is stored as session feedback and fed to `cognee.improve()`, which lowers the `feedback_weight` on the exact graph nodes that flag used; the next feedback-influenced recall ranks them out, so that drift (and similar future PRs) stops being flagged — nothing is deleted, memory is re-ranked.
+5. **improve** — a maintainer's 👍/👎 on a flag is stored as session feedback and fed to `cognee.improve()`, which gently nudges the `feedback_weight` on the exact graph nodes that flag used (a 👎 down, a 👍 up); the next feedback-influenced recall ranks that evidence accordingly, re-shaping the retrieved answer. Unlike forget, nothing is deleted — the decision stays in memory; improve just refines the ranking.
 
 ## Groq reasoning + local memory
 
@@ -63,8 +63,9 @@ python scripts/day4_improve.py
 - **Day 1** ✅ — Self-hosted Cognee verified end-to-end (remember → recall → forget).
 - **Day 2** ✅ — Reversal detection working: 90% confidence catch on ADR-001 reversal.
 - **Day 3** ✅ — Full flip proven: same PR flagged before forget, silent after.
-- **Day 4** ✅ — Improve phase: a 👎 routed through `cognee.improve()` down-weights the
-  flag's memory, so the same drift (and a similar future PR) stops surfacing.
+- **Day 4** ✅ — Improve phase: a 👎 routed through `cognee.improve()` gently re-weights the
+  flag's memory (feedback_weight nudged down), re-ranking the retrieved evidence — without
+  erasing the decision (that's forget).
 
 ## Tests
 

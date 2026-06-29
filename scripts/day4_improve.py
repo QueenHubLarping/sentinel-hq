@@ -1,26 +1,35 @@
 """
-Day 4 — the Improve phase: a 👎 teaches Sentinel to stop flagging a drift it considers
-noise, proven on screen via Cognee's own ``improve()``.
+Day 4 — the Improve phase: 👍/👎 feedback RE-WEIGHTS memory (it does not erase it),
+proven on screen via Cognee's own ``improve()``.
 
-  BEFORE: detect PR #61 (app-level rate limiting) -> Sentinel FLAGS it (reverses ADR-003)
-          detect PR #63 (a *similar* app-level rate-limit PR) -> also FLAGGED (baseline)
-  ACT:    maintainer 👎 the #61 flag as noise -> cognee.improve() streams that feedback
-          onto the exact graph nodes/edges the flag used (feedback_weight 0.5 -> ~0.0)
-  AFTER:  detect PR #61 again -> SILENT (the memory it relied on is down-ranked)
-          detect PR #63 again -> SILENT too (the *similar future flag* is suppressed)
+improve is NOT forget. Forget (Day 3) erases a doc: the decision is gone and the same PR
+goes silent. improve only *adjusts* ``feedback_weight`` on the graph elements a recall used —
+a 👎 nudges them down, a 👍 nudges them up, by a gentle ``feedback_alpha`` step — which
+re-ranks what the next recall surfaces. The decision stays in memory the whole time.
 
-This is SPINE-2's improve half: a drift-type drops below threshold and stops surfacing,
-inspectable as a before/after diff (feedback_weight + retrieved-context size), not narrated.
-It is distinct from forget (Day 3): nothing is deleted — memory is re-ranked, and only the
-elements the dismissed flag actually used.
+The script takes two sample PRs that reverse the same decision: it 👎s the flag on the
+first, then re-checks the second (a similar PR) to see whether the nudge carried over.
+
+  BEFORE: detect both PRs -> Sentinel flags each (they reverse a past decision)
+  ACT:    maintainer 👎 the first flag -> cognee.improve() nudges feedback_weight DOWN on the
+          exact graph nodes/edges that flag's recall used (e.g. 0.5 -> ~0.35)
+  AFTER:  the retrieved ANSWER changes — the down-weighted evidence ranks lower, so the recall
+          context shifts — but the decision is NOT erased: detection still recognizes it.
+          (That permanence is the point: re-rank, don't delete.)
+
+What this proves (a before/after diff, not narration):
+  1. feedback_weight on the flag's elements drops from the 0.5 baseline (the graph mutated).
+  2. the feedback-influenced recall context changes (the answer re-ranked) for both PRs —
+     the learning transfers to the similar one.
+  3. the decision survives — improve refined the ranking, it did not forget anything.
 
 Run from the repo root:
     python scripts/day4_improve.py
 
-First run ingests the whole corpus (cognify), which is LLM-heavy — on a rate-limited Groq
-tier this is the slow/flaky part. The graph then persists, so later runs reuse it and only
-do the (cheap) detect → improve → re-detect loop. The improve weight mutation itself is
-graph-only (no LLM) and is the load-bearing proof.
+First run ingests the corpus (cognify), which is LLM-heavy — on a rate-limited Groq tier
+this is the slow part. The graph then persists, so later runs reuse it and only do the
+(cheap) detect → improve → re-detect loop. The improve weight mutation itself is graph-only
+(no LLM) and is the load-bearing proof.
 """
 
 import os
@@ -71,12 +80,32 @@ def enable_session_cache() -> None:
         raise RuntimeError("session cache could not be enabled; improve feedback would no-op.")
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-PR_A = SAMPLES / "incoming_pr_61_app_ratelimit.md"          # the flag we dismiss as noise
-PR_B = SAMPLES / "incoming_pr_63_app_ratelimit_orders.md"   # the similar "future" flag
+PR_FLAGGED = SAMPLES / "incoming_pr_61_app_ratelimit.md"           # the flag the maintainer 👎s
+PR_SIMILAR = SAMPLES / "incoming_pr_63_app_ratelimit_orders.md"    # a similar PR — does the nudge carry over?
 
-# Weight the retriever gives to learned feedback (0..1). 0.4 leaves baseline relevance
-# ranking intact (so #61/#63 still flag before any feedback) while giving a 👎 real bite.
+
+def _pr_label(path: Path) -> str:
+    """A short human label derived from the sample filename (e.g. 'PR #61').
+
+    Kept dynamic so the script isn't hard-wired to any particular corpus — swap the sample
+    files and the output labels follow.
+    """
+    import re
+
+    m = re.search(r"pr[_-]?(\d+)", path.stem, re.IGNORECASE)
+    return f"PR #{m.group(1)}" if m else path.stem
+
+
+# Weight the retriever gives to learned feedback (0..1). When every node sits at the uniform
+# 0.5 baseline, influence is just a constant offset, so the BEFORE ranking is unchanged and
+# both PRs still flag. Kept modest on purpose: a gentle 👎 should re-rank the retrieved
+# answer, not evict the decision (eviction is forget's job).
 INFLUENCE = 0.4
+
+# How gently a single 👎 nudges feedback_weight (streaming step new = old + alpha*(rating-old)).
+# 0.3 => one 👎 moves a node 0.5 -> ~0.35: a refinement, not an erase. Repeated feedback
+# accumulates. (Same as the module default; named here so the demo's intent is explicit.)
+FEEDBACK_ALPHA = 0.3
 GC = cognee.SearchType.GRAPH_COMPLETION
 
 
@@ -90,8 +119,8 @@ async def _node_count() -> int:
 async def _context_chars(pr_text: str) -> int:
     """Size of the feedback-influenced graph context retrieved for a PR's recall query.
 
-    The honest, LLM-independent suppression signal: it shrinks once the drift's memory is
-    down-weighted, even before the judge runs."""
+    The honest, LLM-independent re-ranking signal: it shifts once the recall's memory is
+    re-weighted, even before the judge runs."""
     res = await cognee.search(
         _recall_query(pr_text), query_type=GC, only_context=True, feedback_influence=INFLUENCE
     )
@@ -112,8 +141,9 @@ async def _detect(pr_text: str, *, session_id: str | None):
 
 
 async def main() -> None:
-    pr_a = PR_A.read_text(encoding="utf-8")
-    pr_b = PR_B.read_text(encoding="utf-8")
+    label_a, label_b = _pr_label(PR_FLAGGED), _pr_label(PR_SIMILAR)
+    pr_a = PR_FLAGGED.read_text(encoding="utf-8")
+    pr_b = PR_SIMILAR.read_text(encoding="utf-8")
     await setup_cognee()
     enable_session_cache()  # must run after cognee import; else 👎 feedback is a no-op
 
@@ -123,22 +153,25 @@ async def main() -> None:
     print(f"-> graph ready ({await _node_count()} nodes); feedback_influence={INFLUENCE}\n")
 
     run = uuid4().hex[:8]  # unique session ids so a re-run never serves a stale cache hit
-    sid_flag = f"flag-61-{run}"
+    sid_flag = f"flag-{run}"
 
     print("=" * 70)
-    print("BEFORE — detect the two incoming rate-limit PRs")
+    print("BEFORE — detect the two incoming PRs")
     print("=" * 70)
     v_a = await _detect(pr_a, session_id=sid_flag)   # recorded: this recall is what we 👎
     v_b0 = await _detect(pr_b, session_id=None)
-    print(f"PR #61  reverses_decision = {v_a.reverses_decision}  ({v_a.decision_reference})  conf={v_a.confidence:.0%}")
-    print(f"PR #63  reverses_decision = {v_b0.reverses_decision}  ({v_b0.decision_reference})  conf={v_b0.confidence:.0%}")
+    print(f"{label_a}  reverses_decision = {v_a.reverses_decision}  ({v_a.decision_reference})  conf={v_a.confidence:.0%}")
+    print(f"{label_b}  reverses_decision = {v_b0.reverses_decision}  ({v_b0.decision_reference})  conf={v_b0.confidence:.0%}")
     b_chars_before = await _context_chars(pr_b)
-    print(f"PR #63  retrieved-context size: {b_chars_before} chars")
-    print("\n--- the flag a maintainer is about to dismiss (PR #61) ---\n")
+    print(f"{label_b}  retrieved-context size: {b_chars_before} chars")
+    print(f"\n--- the flag a maintainer is about to give feedback on ({label_a}) ---\n")
     print(render_comment(v_a))
 
+    decision = v_a.decision_reference or "the decision"
+
     print("\n" + "=" * 70)
-    print("ACT — maintainer 👎 the PR #61 flag: 'app-level rate limiting is fine here, stop flagging it'")
+    print(f"ACT — maintainer 👎 the {label_a} flag (feedback: this evidence was less useful here)")
+    print(f"     improve() NUDGES its weights down — it does NOT erase {decision} (that's forget).")
     print("=" * 70)
     # Inspect the weights on the exact elements this flag used, before improve().
     from sentinel.improve import latest_recall_qa, _element_ids
@@ -147,42 +180,50 @@ async def main() -> None:
     node_ids = _element_ids(qa, "node_ids") if qa else []
     edge_ids = _element_ids(qa, "edge_ids") if qa else []
     print(f"flag recall used {len(node_ids)} node(s) + {len(edge_ids)} edge(s)")
-    _summarize_weights("feedback_weight BEFORE (nodes)", await node_feedback_weights(node_ids))
+    before_w = await node_feedback_weights(node_ids)
+    _summarize_weights("feedback_weight BEFORE (nodes)", before_w)
 
-    result = await dismiss_as_noise(sid_flag)
-    print(f"\ncognee.improve() -> status={result.get('status')}  "
+    result = await dismiss_as_noise(sid_flag, alpha=FEEDBACK_ALPHA)
+    print(f"\ncognee.improve(feedback_alpha={FEEDBACK_ALPHA}) -> status={result.get('status')}  "
           f"targeted {result.get('targeted_nodes', 0)} node(s) / {result.get('targeted_edges', 0)} edge(s)")
     if result.get("improve", {}).get("warning"):
         print(f"   note: {result['improve']['warning']}")
 
-    _summarize_weights("feedback_weight AFTER  (nodes)", await node_feedback_weights(node_ids))
+    after_w = await node_feedback_weights(node_ids)
+    _summarize_weights("feedback_weight AFTER  (nodes)", after_w)
     _summarize_weights("feedback_weight AFTER  (edges)", await edge_feedback_weights(edge_ids))
 
     print("\n" + "=" * 70)
     print("AFTER — re-detect both PRs (fresh sessions, so recall is recomputed live)")
     print("=" * 70)
-    v_a2 = await _detect(pr_a, session_id=f"recheck-61-{run}")
-    v_b2 = await _detect(pr_b, session_id=f"recheck-63-{run}")
+    v_a2 = await _detect(pr_a, session_id=f"recheck-a-{run}")
+    v_b2 = await _detect(pr_b, session_id=f"recheck-b-{run}")
     b_chars_after = await _context_chars(pr_b)
-    print(f"PR #61  reverses_decision = {v_a2.reverses_decision}  ({v_a2.decision_reference})  conf={v_a2.confidence:.0%}")
-    print(f"PR #63  reverses_decision = {v_b2.reverses_decision}  ({v_b2.decision_reference})  conf={v_b2.confidence:.0%}")
-    print(f"PR #63  retrieved-context size: {b_chars_before} -> {b_chars_after} chars "
-          f"({'shrank' if b_chars_after < b_chars_before else 'unchanged'})")
-    print("\n--- what Sentinel now says about the *similar* PR #63 ---\n")
+    print(f"{label_a}  reverses_decision = {v_a2.reverses_decision}  ({v_a2.decision_reference})  conf={v_a2.confidence:.0%}")
+    print(f"{label_b}  reverses_decision = {v_b2.reverses_decision}  ({v_b2.decision_reference})  conf={v_b2.confidence:.0%}")
+    print(f"{label_b}  retrieved-context size: {b_chars_before} -> {b_chars_after} chars "
+          f"({'shrank' if b_chars_after < b_chars_before else 'grew' if b_chars_after > b_chars_before else 'unchanged'})")
+    print("   ^ the retrieved evidence was re-ranked by the 👎 — yet the decision is still"
+          " detected (improve refined the answer; it did not erase the decision).")
+    print(f"\n--- Sentinel still recognizes the decision in the similar {label_b} (not forgotten) ---\n")
     print(render_comment(v_b2))
 
     print("\n" + "=" * 70)
-    dismissed_suppressed = v_a.reverses_decision and not v_a2.reverses_decision
-    similar_suppressed = v_b0.reverses_decision and not v_b2.reverses_decision
-    context_shrank = b_chars_after < b_chars_before
-    if dismissed_suppressed and similar_suppressed:
-        print("IMPROVE PROVEN: 👎 suppressed the dismissed flag AND the similar future flag.")
-    elif dismissed_suppressed or context_shrank:
-        print("IMPROVE PROVEN (partial): the dismissed drift is down-ranked after feedback "
-              f"(#61 flip={dismissed_suppressed}, #63 context shrank={context_shrank}).")
+    avg = lambda d: (sum(d.values()) / len(d)) if d else 0.0
+    weights_nudged_down = bool(node_ids) and avg(after_w) < avg(before_w)
+    answer_reranked = b_chars_after != b_chars_before
+    decision_kept = v_a2.reverses_decision  # decision still recognized -> NOT erased
+    if weights_nudged_down and answer_reranked and decision_kept:
+        print(f"IMPROVE PROVEN: the 👎 nudged feedback_weight {avg(before_w):.2f} -> {avg(after_w):.2f} "
+              f"and re-ranked the retrieved answer ({label_b} context {b_chars_before} -> {b_chars_after} chars),")
+        print(f"  while {decision} stayed in memory and is still detected. "
+              "That's improve (refine the ranking), not forget (erase the doc).")
+    elif weights_nudged_down:
+        print(f"IMPROVE applied: feedback_weight {avg(before_w):.2f} -> {avg(after_w):.2f} "
+              f"(answer re-ranked={answer_reranked}, decision kept={decision_kept}).")
     else:
-        print("NO SUPPRESSION: feedback did not change recall — check CACHING / influence / alpha.")
-    print("(re-run to repeat; weights persist in the graph between runs)")
+        print("NO WEIGHT CHANGE: improve did not adjust weights — check CACHING / session / alpha.")
+    print("(re-run rebuilds; weights persist in the graph between runs unless you run wipe.py)")
 
 
 if __name__ == "__main__":

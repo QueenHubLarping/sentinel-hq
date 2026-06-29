@@ -1,11 +1,10 @@
 """
 Improve phase — the 👍/👎 feedback loop, built on Cognee's own ``improve()``.
 
-forget retires a decision the team *overturned*. improve teaches Sentinel which
-flags the team considers **noise** — without deleting anything. A maintainer
-thumbs-down a flag ("this drift isn't worth flagging"), and Sentinel stops crying
-wolf on the same kind of change. We do this honestly through Cognee's memory
-lifecycle, not a side table:
+forget retires a decision the team *overturned* — it erases the doc. improve is
+different and gentler: 👍/👎 only *re-weight* the memory a recall used, nudging how it
+ranks next time. Nothing is deleted; the decision stays in the graph. We do this
+honestly through Cognee's memory lifecycle, not a side table:
 
   1. recall runs inside a Cognee *session* (``search(session_id=...)``), so Cognee
      records exactly which graph nodes/edges produced the flag
@@ -13,17 +12,19 @@ lifecycle, not a side table:
   2. the maintainer's verdict is stored as session feedback
      (``cognee.session.add_feedback``, score 1..5).
   3. ``cognee.improve(dataset=..., session_ids=[...])`` streams that score onto the
-     graph: a 👎 (score 1 → rating 0.0) drives ``feedback_weight`` toward 0 on those
-     exact elements; a 👍 (score 5 → rating 1.0) drives it toward 1. The step size is
-     ``feedback_alpha``.
-  4. the next recall runs with ``feedback_influence > 0``, so down-weighted nodes get
-     a larger effective distance, fall out of the top-k triplets, and stop reaching
-     the judge — the flag is suppressed. Nothing was forgotten; memory was re-ranked.
+     graph: ``feedback_weight`` is nudged toward the rating by ``feedback_alpha`` —
+     ``new = old + alpha*(rating - old)``. With a deliberately gentle alpha, a single 👎
+     nudges a node from 0.5 *toward* 0 (e.g. ~0.35) and a 👍 *toward* 1 (~0.65);
+     repeated feedback accumulates. improve *adjusts* the weight; it never deletes.
+  4. the next recall runs with ``feedback_influence > 0``, so a down-weighted element
+     gets a slightly larger effective distance and ranks lower — re-shaping the
+     retrieved answer. The decision is NOT erased and may still surface; improve
+     refines the ranking, forget removes the doc.
 
 Why this is the genuine Cognee verb, not a bolt-on: the weights live on the graph
 nodes themselves and are consumed by Cognee's own triplet ranker
 (``CogneeGraph.calculate_top_triplet_importances``). Remove Cognee and there is no
-feedback-aware recall to suppress.
+feedback-aware recall to re-rank.
 
 Runtime requirements (the Day-4 script sets these *before* importing cognee):
   - ``CACHING=true``       — the session cache must be live, else feedback is a no-op.
@@ -40,16 +41,17 @@ import cognee
 from sentinel.ingest import DATASET_NAME
 
 # Feedback scores map to a normalized rating in [0, 1] (Cognee uses (score-1)/4):
-#   score 1 -> rating 0.0  (strongest "suppress")
-#   score 5 -> rating 1.0  (strongest "reinforce")
+#   score 1 -> rating 0.0  (the target a 👎 nudges toward)
+#   score 5 -> rating 1.0  (the target a 👍 nudges toward)
 THUMBS_DOWN = 1
 THUMBS_UP = 5
 
 # Step size for the streaming weight update inside improve(): new = old + alpha*(rating-old).
-# We default to a decisive 1.0 so a single 👎 moves a node from the 0.5 baseline straight
-# to 0.0 (and a 👍 to 1.0) — the demo wants an unambiguous mutation, not a slow drift.
-# Cognee requires alpha in (0, 1].
-DEFAULT_FEEDBACK_ALPHA = 1.0
+# Kept gentle (0.3) ON PURPOSE: a single 👎 nudges a node 0.5 -> ~0.35 (and a 👍 -> ~0.65),
+# a refinement — not 0.0/1.0, which would read like an erase/forget. Repeated feedback
+# accumulates toward the rating. Cognee requires alpha in (0, 1]; raise it for a more
+# decisive move, lower it for an even subtler nudge.
+DEFAULT_FEEDBACK_ALPHA = 0.3
 
 
 def _element_ids(entry, key: str) -> list[str]:
@@ -160,14 +162,15 @@ async def _act_on_flag(session_id: str, *, score: int, note: str, alpha: float, 
 async def dismiss_as_noise(
     session_id: str,
     *,
-    note: str = "Dismissed by maintainer as noise — stop flagging this drift.",
+    note: str = "Maintainer feedback: de-emphasise this evidence (less useful here).",
     alpha: float = DEFAULT_FEEDBACK_ALPHA,
     dataset: str = DATASET_NAME,
 ) -> dict:
     """👎 the most recent flag in this session: record a low score, then ``improve()``.
 
-    Drives ``feedback_weight`` toward 0 on the graph elements that produced the flag, so
-    the next feedback-influenced recall ranks them out and the drift stops surfacing.
+    Nudges ``feedback_weight`` down (toward 0, by ``alpha``) on the graph elements that
+    produced the flag, so the next feedback-influenced recall ranks them lower — refining
+    the answer. It does NOT delete them: the decision stays in memory (that's forget's job).
     """
     return await _act_on_flag(
         session_id, score=THUMBS_DOWN, note=note, alpha=alpha, dataset=dataset
