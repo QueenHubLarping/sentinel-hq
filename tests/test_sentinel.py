@@ -346,3 +346,45 @@ def test_pr_to_doc_handles_empty_body():
     assert "(no description provided)" in content
     # data_id derives from the label, so forget/dedup work on live PRs too.
     assert corpus_file_data_id("PR-7.md") == corpus_file_data_id(label)
+
+
+# ---------------------------------------------------------------------------
+# graph_viz — Mermaid evidence subgraph for the PR comment (pure, no network)
+# ---------------------------------------------------------------------------
+from sentinel.graph_viz import build_mermaid  # noqa: E402
+
+_NBID = {
+    "a": {"name": "adr-001", "type": "Entity"},
+    "p": {"name": "pr #42", "type": "Entity"},
+    "s": {"name": "slack discussion", "type": "Entity"},
+    "e": {"name": "email service", "type": "Entity"},
+    "person": {"name": "priya sharma", "type": "Entity"},
+    "d": {"name": "2024-08-14", "type": "Entity"},
+}
+_EDGES = [
+    {"src": "a", "dst": "s", "rel": "discussed_in"},
+    {"src": "a", "dst": "p", "rel": "implements"},
+    {"src": "p", "dst": "a", "rel": "implements"},      # reciprocal — should be deduped
+    {"src": "a", "dst": "e", "rel": "pertains_to"},
+    {"src": "a", "dst": "person", "rel": "authored_by"},
+    {"src": "a", "dst": "d", "rel": "accepted_on"},     # date — should be pruned
+    {"src": "x", "dst": "x", "rel": "contains"},        # struct/orphan — ignored
+]
+
+
+def test_build_mermaid_renders_typed_subgraph():
+    out = build_mermaid(_NBID, _EDGES, "ADR-001 (async email)", "This PR — sync email")
+    assert out.startswith("```mermaid") and out.rstrip().endswith("```")
+    assert "flowchart LR" in out
+    assert "🔻 This PR — sync email" in out           # incoming node
+    assert 'INC -->|"reverses"|' in out               # incoming reverses the decision
+    assert "ADR-001" in out                            # decision label
+    assert "classDef decision" in out and "classDef slack" in out
+    assert '|"discussed in"|' in out                   # typed edge label, underscore->space
+    # date node pruned; reciprocal implements collapsed to a single pair edge
+    assert "2024-08-14" not in out
+    assert out.count('|"implements"|') == 1
+
+
+def test_build_mermaid_empty_when_decision_absent():
+    assert build_mermaid(_NBID, _EDGES, "ADR-999 (missing)") == ""

@@ -176,7 +176,20 @@ async def main() -> int:
         await ingest_corpus()
 
     verdict = await detect_reversal(pr_text)
-    comment = render_comment(verdict)
+
+    # Best-effort: render the flagged decision's real subgraph as an inline Mermaid diagram
+    # so the PR comment SHOWS the typed multi-hop graph Sentinel traversed. Never blocks.
+    graph_section = ""
+    if verdict.should_flag:
+        try:
+            from sentinel.graph_viz import evidence_mermaid
+
+            first_line = next((ln.strip("# ").strip() for ln in pr_text.splitlines() if ln.strip()), "This PR")
+            graph_section = await evidence_mermaid(verdict.decision_reference, incoming_label=first_line[:34])
+        except Exception as exc:  # noqa: BLE001 — advisory: the diagram is a bonus, not required
+            print(f"graph diagram skipped: {exc}")
+
+    comment = render_comment(verdict, graph_section)
 
     print("\n" + comment + "\n")
     _write_summary(comment)

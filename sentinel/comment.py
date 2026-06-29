@@ -49,9 +49,14 @@ def _footer(tagline: str) -> str:
     return f"<sub>🛡️ <b>Sentinel</b> · {tagline}</sub>"
 
 
-def render_comment(verdict: Verdict) -> str:
+def render_comment(verdict: Verdict, graph_section: str = "") -> str:
     """Markdown comment for a PR: the ⚠️ reversal card, the muted-by-feedback note, or
-    a calm clean-bill note."""
+    a calm clean-bill note.
+
+    graph_section: an optional ```mermaid block (the evidence subgraph Sentinel traversed,
+    from sentinel.graph_viz) — shown inline in the reversal card so the reviewer SEES the
+    typed, multi-hop decision graph, not just a verdict.
+    """
     if verdict.reverses_decision and verdict.suppressed_by_feedback:
         return render_suppressed(verdict)
     if not verdict.reverses_decision:
@@ -87,6 +92,17 @@ def render_comment(verdict: Verdict) -> str:
         f"> {verdict.impact_if_merged or '_(impact not captured)_'}",
         "",
     ]
+
+    if graph_section:
+        lines += [
+            "### 🕸️ The decision graph behind this flag",
+            "",
+            "_Sentinel reached this by **traversing typed edges across documents** in its "
+            "Cognee knowledge graph — ADR ↔ PR ↔ Slack — not by keyword search:_",
+            "",
+            graph_section,
+            "",
+        ]
 
     if verdict.analysis:
         lines += [
