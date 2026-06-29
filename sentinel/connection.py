@@ -38,16 +38,27 @@ for _k, _v in _DEFAULTS.items():
 
 
 async def setup_cognee() -> None:
-    """Apply Groq + Ollama config and fail fast on missing dependencies."""
+    """Apply the LLM + Ollama-embeddings config and fail fast on missing dependencies.
+
+    Two LLM postures, selected by LLM_PROVIDER:
+      - ``ollama``  — fully local reasoning (no API key needed); the on-prem/self-hosted
+        posture. A dummy LLM_API_KEY ("ollama") satisfies the client.
+      - anything else (e.g. ``custom`` for Groq) — needs a real key in LLM_API_KEY/GROQ_API_KEY.
+    """
     import cognee
 
-    api_key = (os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY", "")).strip()
-    if not api_key:
-        raise RuntimeError(
-            "Groq API key is missing. Set GROQ_API_KEY (recommended) or LLM_API_KEY."
-        )
+    provider = os.environ["LLM_PROVIDER"]
+    if provider == "ollama":
+        api_key = (os.environ.get("LLM_API_KEY") or "ollama").strip()
+    else:
+        api_key = (os.environ.get("LLM_API_KEY") or os.environ.get("GROQ_API_KEY", "")).strip()
+        if not api_key:
+            raise RuntimeError(
+                f"LLM API key is missing for provider '{provider}'. "
+                "Set GROQ_API_KEY (or LLM_API_KEY), or use LLM_PROVIDER=ollama for local reasoning."
+            )
 
-    cognee.config.set_llm_provider(os.environ["LLM_PROVIDER"])
+    cognee.config.set_llm_provider(provider)
     cognee.config.set_llm_model(os.environ["LLM_MODEL"])
     if os.environ.get("LLM_ENDPOINT"):
         cognee.config.set_llm_endpoint(os.environ["LLM_ENDPOINT"])

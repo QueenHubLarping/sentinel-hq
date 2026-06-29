@@ -17,9 +17,30 @@ inputs:
     description: "Token used to post the comment (only needed for mode=post)"
     required: false
     default: ${{ github.token }}
+  # ── LLM posture ──────────────────────────────────────────────────────────
+  # Default: fully local reasoning via Ollama on the self-hosted runner — no API
+  # key, no rate limits, nothing leaves the box. Set llm-provider=custom +
+  # groq-api-key to use Groq cloud instead.
+  llm-provider:
+    description: "ollama (local, default) or custom (e.g. Groq cloud)"
+    required: false
+    default: "ollama"
+  llm-model:
+    description: "Reasoning model (ollama: e.g. qwen2.5:3b; Groq: groq/llama-3.3-70b-versatile)"
+    required: false
+    default: "qwen2.5:3b"
+  llm-endpoint:
+    description: "LLM endpoint (local Ollama OpenAI-compatible API by default)"
+    required: false
+    default: "http://localhost:11434/v1"
+  llm-instructor-mode:
+    description: "Instructor mode for structured output; json_schema_mode is required for small local models"
+    required: false
+    default: "json_schema_mode"
   groq-api-key:
-    description: "Groq API key used for LLM reasoning"
-    required: true
+    description: "Groq API key — only needed when llm-provider=custom (Groq cloud)"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -34,8 +55,15 @@ runs:
         SENTINEL_MODE: ${{ inputs.mode }}
         SENTINEL_PR_FILE: ${{ inputs.pr-file }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        LLM_PROVIDER: ${{ inputs.llm-provider }}
+        LLM_MODEL: ${{ inputs.llm-model }}
+        LLM_ENDPOINT: ${{ inputs.llm-endpoint }}
+        LLM_INSTRUCTOR_MODE: ${{ inputs.llm-instructor-mode }}
+        # Dummy for local Ollama; the real key (Groq) is read from groq-api-key.
+        LLM_API_KEY: ${{ inputs.groq-api-key }}
         GROQ_API_KEY: ${{ inputs.groq-api-key }}
       run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
 
-# NOTE: detection uses Groq for reasoning and local Ollama for embeddings. Use a
-# self-hosted runner with `ollama serve` and `nomic-embed-text` pulled.
+# NOTE: detection uses local Ollama for BOTH reasoning (qwen2.5:3b) and embeddings
+# (nomic-embed-text) by default. Use a self-hosted runner with `ollama serve` and both
+# models pulled:  ollama pull qwen2.5:3b nomic-embed-text
