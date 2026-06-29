@@ -281,3 +281,68 @@ def test_dismissal_file_roundtrip_and_idempotent(tmp_path, monkeypatch):
     # One entry per signature despite the repeated dismissal.
     body = dismissed_file().read_text(encoding="utf-8")
     assert body.count("ADR-001") == 1
+
+
+# ---------------------------------------------------------------------------
+# SPINE-1 proof — pure marker-matching helper (no Cognee/network)
+# ---------------------------------------------------------------------------
+import pathlib  # noqa: E402
+import sys as _sys  # noqa: E402
+
+_sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
+from spine1_proof import RATIONALE_MARKERS, hit_count, rationale_hits  # noqa: E402
+
+
+def test_rationale_hits_detects_slack_only_rationale():
+    # A retrieval that surfaced the Slack thread reaches the conversational rationale.
+    ctx = "We use Flower for monitoring and retry with backoff; a daily reconciliation job resends."
+    hits = rationale_hits(ctx)
+    assert hits["flower queue monitoring"] is True
+    assert hits["retry/backoff guarantee"] is True
+    assert hits["reconciliation safety-net"] is True
+    assert hit_count(hits) >= 3
+
+
+def test_rationale_hits_absent_in_pr_diff_text():
+    # The PR diff (Celery/Redis/SMTP) carries none of the Slack-only rationale → control ~0.
+    pr_like = "Send the confirmation email directly via SendGrid SMTP, no Celery/Redis queue."
+    assert hit_count(rationale_hits(pr_like)) == 0
+
+
+def test_rationale_hits_empty_and_case_insensitive():
+    assert hit_count(rationale_hits("")) == 0
+    assert rationale_hits("FLOWER dashboard")["flower queue monitoring"] is True
+    assert set(rationale_hits("x").keys()) == set(RATIONALE_MARKERS.keys())
+
+
+# ---------------------------------------------------------------------------
+# sources — rendering a real merged PR into an ingestible doc (pure, no network)
+# ---------------------------------------------------------------------------
+from sentinel.sources import pr_to_doc  # noqa: E402
+
+
+def test_pr_to_doc_renders_tagged_markdown():
+    label, content = pr_to_doc({
+        "number": 42,
+        "title": "Implement async email via Celery",
+        "body": "Move SMTP off the checkout path to cut p95 latency.",
+        "author": "@priya-sharma",
+        "merged_at": "2024-08-16T10:00:00Z",
+        "files": ["checkout/views.py", "checkout/tasks.py"],
+    })
+    assert label == "PR-42.md"
+    assert "[source_type: PR]" in content
+    assert "[pr_number: 42]" in content
+    assert "[author: priya-sharma]" in content      # leading @ stripped
+    assert "[merged: 2024-08-16]" in content         # date only
+    assert "[files: checkout/views.py, checkout/tasks.py]" in content
+    assert "# PR #42: Implement async email via Celery" in content
+    assert "cut p95 latency" in content
+
+
+def test_pr_to_doc_handles_empty_body():
+    label, content = pr_to_doc({"number": 7, "title": "x", "body": "", "author": "", "merged_at": "", "files": []})
+    assert label == "PR-7.md"
+    assert "(no description provided)" in content
+    # data_id derives from the label, so forget/dedup work on live PRs too.
+    assert corpus_file_data_id("PR-7.md") == corpus_file_data_id(label)

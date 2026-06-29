@@ -293,9 +293,37 @@ def _build_header(path: Path, source_type: str, meta: dict) -> str:
 # Main ingestion pipeline
 # ---------------------------------------------------------------------------
 
+def _memory_file_sources() -> list[tuple[Path, str]]:
+    """The on-disk documents to ingest, REAL sources first.
+
+    Inside a GitHub Action we read the consuming repo's own history: its decision docs
+    (ADRs/RFCs/etc. from the checkout) and attached Slack-export files. Merged PRs are
+    fetched from the API separately (see ingest_corpus). Outside an Action (local dev /
+    tests) we fall back to the bundled demo corpus so everything still runs offline.
+    """
+    from sentinel import sources
+
+    if not sources.in_github_action():
+        return list(_iter_corpus_files())  # bundled demo corpus (adrs + slack + prs)
+
+    docs: list[tuple[Path, str]] = sources.repo_decision_docs()
+    if not docs:  # repo has no docs/adr etc. — still read the resolved ADR dir
+        docs = [(p, "ADR") for p in sorted(adr_dir().glob("*.md"))]
+
+    slack = sources.slack_export_paths()
+    if not slack:  # no Slack export attached — use the bundled threads as an example
+        slack = sorted((CORPUS_DIR / "slack").glob("*.md"))
+    docs += [(p, "Slack") for p in slack]
+    return docs
+
+
 async def ingest_corpus() -> None:
-    files = list(_iter_corpus_files())
-    print(f"-> Staging {len(files)} corpus file(s) into local Cognee...")
+    from sentinel import sources
+
+    files = _memory_file_sources()
+    real = sources.in_github_action()
+    print(f"-> Staging {len(files)} document(s) into Cognee "
+          f"({'live repo history' if real else 'bundled demo corpus'})...")
 
     staged = 0
     for path, source_type in files:
@@ -326,6 +354,23 @@ async def ingest_corpus() -> None:
         await cognee.add(item, dataset_name=DATASET_NAME)
         staged += 1
         print(f"   + {path.name} ({source_type})")
+
+    # Real merged PRs — the team's actual "why" — fetched from the GitHub API for the
+    # repo the Action runs in. This is what makes the corpus REAL (no seeded PR files).
+    # Best-effort: remember must still build a graph if the API is unreachable.
+    if real and os.environ.get("SENTINEL_INGEST_PRS", "true").lower() != "false":
+        limit = int(os.environ.get("SENTINEL_PR_LIMIT", "25") or 25)
+        try:
+            prs = sources.fetch_merged_prs(limit)
+        except Exception as exc:  # noqa: BLE001 — degrade gracefully
+            print(f"   (live PR ingest skipped: {exc})")
+            prs = []
+        for pr in prs:
+            label, content = sources.pr_to_doc(pr)
+            item = DataItem(data=content, label=label, data_id=corpus_file_data_id(label))
+            await cognee.add(item, dataset_name=DATASET_NAME)
+            staged += 1
+            print(f"   + {label} (PR, live: \"{pr['title'][:48]}\")")
 
     print(f"-> cognify() — extracting entities + building graph from {staged} doc(s)...")
     await cognee.cognify(datasets=[DATASET_NAME])

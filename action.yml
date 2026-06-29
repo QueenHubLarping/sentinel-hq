@@ -46,6 +46,25 @@ inputs:
     description: "Deprecated alias for llm-api-key (Groq cloud). Prefer llm-api-key."
     required: false
     default: ""
+  # ── Memory sources (the `remember` phase) ─────────────────────────────────
+  # Sentinel builds institutional memory from the repo's REAL history: decision docs
+  # in the checkout + merged PRs via the GitHub API. No seeded files.
+  ingest-prs:
+    description: "Ingest the repo's merged PRs (the real 'why') into memory"
+    required: false
+    default: "true"
+  pr-limit:
+    description: "How many recent merged PRs to ingest"
+    required: false
+    default: "25"
+  doc-globs:
+    description: "Comma-separated globs (repo-root relative) for decision docs to ingest"
+    required: false
+    default: "docs/adr/*.md,docs/decisions/*.md,docs/rfcs/*.md,ADR-*.md"
+  slack-export-dir:
+    description: "Optional path to attached Slack-export markdown (the Slack connector)"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -68,6 +87,11 @@ runs:
         # placeholder when no real (OpenAI/Groq) key is supplied.
         LLM_API_KEY: ${{ inputs.llm-api-key || inputs.groq-api-key || 'ollama' }}
         GROQ_API_KEY: ${{ inputs.groq-api-key }}
+        # Memory sources (remember phase) — build the graph from the repo's real history.
+        SENTINEL_INGEST_PRS: ${{ inputs.ingest-prs }}
+        SENTINEL_PR_LIMIT: ${{ inputs.pr-limit }}
+        SENTINEL_DOC_GLOBS: ${{ inputs.doc-globs }}
+        SENTINEL_SLACK_DIR: ${{ inputs.slack-export-dir }}
       run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
 
 # NOTE: detection uses local Ollama for BOTH reasoning (qwen2.5:3b) and embeddings

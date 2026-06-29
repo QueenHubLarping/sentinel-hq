@@ -39,9 +39,9 @@ from sentinel.github_pr import (  # noqa: E402
     post_comment,
     pr_head_branch,
 )
-from sentinel.improve import record_noise_file  # noqa: E402
+from sentinel.improve import record_noise, record_noise_file  # noqa: E402
 from sentinel.ingest import ingest_corpus  # noqa: E402
-from sentinel.resolve import _adr_number, supersede_adr_file  # noqa: E402
+from sentinel.resolve import _adr_number, mark_intentional, supersede_adr_file  # noqa: E402
 
 
 async def _node_count() -> int:
@@ -58,11 +58,14 @@ def _write_summary(comment: str) -> None:
 
 
 async def handle_resolve() -> int:
-    """Handle a '/sentinel intentional' comment: retire the flagged decision.
+    """Handle a '/sentinel intentional' comment: retire the flagged decision (forget).
 
-    Cheap and self-contained — no cognee/LLM. We read which ADR was flagged from
-    Sentinel's prior comment, mark that ADR Superseded in docs/adr on the PR's branch,
-    push it, and confirm. The next detection rebuilds memory without that ADR.
+    Two transports, one verb. The DURABLE backstop: mark the ADR Superseded in docs/adr
+    on the PR branch and push it (survives a wiped graph; next ingest skips it). The REAL
+    Cognee verb, run best-effort alongside it: ``cognee.forget(data_id=...)`` via
+    mark_intentional(), which surgically removes that decision's nodes/embeddings from the
+    persistent graph so the very next detection no longer flags it. Sentinel is advisory:
+    a native-verb failure prints a warning and is swallowed — the command never breaks.
     """
     if "/sentinel intentional" not in comment_body().lower():
         print("Comment is not '/sentinel intentional'; nothing to do.")
@@ -84,18 +87,30 @@ async def handle_resolve() -> int:
 
     commit_and_push(branch, f"docs(adr): supersede {adr_id} — intentional override in #{number}")
     print(f"-> retired {adr_id}: marked {path.name} Superseded on {branch}")
+
+    # The real Cognee verb, best-effort: genuinely forget the decision from the persistent
+    # graph (the git supersession above is the durability backstop). Never fail the command.
+    try:
+        await setup_cognee()
+        result = await mark_intentional(adr_id)
+        print(f"-> native cognee.forget: {result.get('status')} "
+              f"({result.get('retired_items', 0)} item(s)) for {adr_id}")
+    except Exception as exc:  # noqa: BLE001 — advisory: a flaky forget must not break the command
+        print(f"native forget skipped (durable ADR supersession already applied): {exc}")
+
     post_comment(render_resolution(adr_id, number))
     return 0
 
 
 async def handle_feedback() -> int:
-    """Handle a '/sentinel noise' comment: record a 👎 so this drift stops surfacing.
+    """Handle a '/sentinel noise' comment: record a 👎 so this drift stops surfacing (improve).
 
-    This is the improve loop. Like forget, it's cheap and self-contained (no cognee/LLM):
-    we read which decision Sentinel flagged from its prior comment and append that drift's
-    signature to a durable `.sentinel-dismissed` file committed to the PR branch. The next
-    detection reads that file live and suppresses the flag — so improvement survives the
-    ephemeral CI runner, exactly as the ADR supersession does for forget.
+    Two transports, one verb. The DURABLE backstop: append the drift signature to a
+    `.sentinel-dismissed` file committed to the PR branch (the next detection reads it live
+    and suppresses the flag). The REAL Cognee verb, run best-effort alongside it:
+    record_noise() does ``cognee.add`` + ``cognee.cognify`` + ``cognee.improve``, writing the
+    👎 into the graph itself. Sentinel is advisory: a native-verb failure prints a warning and
+    is swallowed — the maintainer command never breaks.
     """
     if "/sentinel noise" not in comment_body().lower():
         print("Comment is not '/sentinel noise'; nothing to do.")
@@ -113,6 +128,17 @@ async def handle_feedback() -> int:
     path = record_noise_file(adr_id)
     commit_and_push(branch, f"chore(sentinel): dismiss {adr_id} drift as noise (/sentinel noise in #{number})")
     print(f"-> dismissed {adr_id} drift as noise: updated {path.name} on {branch}")
+
+    # The real Cognee verb, best-effort: write the 👎 into the graph via cognee.add +
+    # cognify + improve (the .sentinel-dismissed file above is the durability backstop).
+    # cognify/improve are LLM/embedding-heavy and can be slow/flaky — never fail the command.
+    try:
+        await setup_cognee()
+        result = await record_noise(adr_id, pr_number=number)
+        print(f"-> native cognee.improve: {result.get('status')} for {result.get('signature', adr_id)}")
+    except Exception as exc:  # noqa: BLE001 — advisory: a flaky improve must not break the command
+        print(f"native improve skipped (durable dismissal already recorded): {exc}")
+
     post_comment(render_feedback_recorded(adr_id, number))
     return 0
 
