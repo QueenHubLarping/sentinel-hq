@@ -46,6 +46,26 @@ inputs:
     description: "Deprecated alias for llm-api-key (Groq cloud). Prefer llm-api-key."
     required: false
     default: ""
+  # ── Embeddings ───────────────────────────────────────────────────────────
+  # Default: local Ollama (nomic-embed-text) — needs a self-hosted runner with Ollama.
+  # Set embedding-provider: openai (text-embedding-3-small) to run on a GitHub-hosted
+  # runner with no Ollama — fully OpenAI, nothing local.
+  embedding-provider:
+    description: "ollama (local, default) or openai (OpenAI cloud — no Ollama needed)"
+    required: false
+    default: "ollama"
+  embedding-model:
+    description: "Embedding model (ollama: nomic-embed-text; openai: text-embedding-3-small)"
+    required: false
+    default: "nomic-embed-text"
+  embedding-dimensions:
+    description: "Embedding vector size (ollama nomic: 768; openai text-embedding-3-small: 1536)"
+    required: false
+    default: "768"
+  embedding-api-key:
+    description: "API key for a hosted embedding provider (OpenAI). Leave empty for local ollama."
+    required: false
+    default: ""
   # ── Memory sources (the `remember` phase) ─────────────────────────────────
   # Sentinel builds institutional memory from the repo's REAL history: decision docs
   # in the checkout + merged PRs via the GitHub API. No seeded files.
@@ -87,6 +107,10 @@ runs:
         # placeholder when no real (OpenAI/Groq) key is supplied.
         LLM_API_KEY: ${{ inputs.llm-api-key || inputs.groq-api-key || 'ollama' }}
         GROQ_API_KEY: ${{ inputs.groq-api-key }}
+        EMBEDDING_PROVIDER: ${{ inputs.embedding-provider }}
+        EMBEDDING_MODEL: ${{ inputs.embedding-model }}
+        EMBEDDING_DIMENSIONS: ${{ inputs.embedding-dimensions }}
+        EMBEDDING_API_KEY: ${{ inputs.embedding-api-key || inputs.llm-api-key }}
         # Memory sources (remember phase) — build the graph from the repo's real history.
         SENTINEL_INGEST_PRS: ${{ inputs.ingest-prs }}
         SENTINEL_PR_LIMIT: ${{ inputs.pr-limit }}

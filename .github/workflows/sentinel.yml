@@ -1,13 +1,10 @@
-# Example workflow: run Sentinel on every PR.
+# Sentinel runs on every PR — fully on GitHub, fully on OpenAI.
 #
-# Sentinel uses Groq for reasoning (remote) and local Ollama for embeddings.
-# This requires a SELF-HOSTED runner with Ollama running and models pulled:
-#   ollama pull nomic-embed-text
+# Reasoning (gpt-4o-mini) AND embeddings (text-embedding-3-small) use the OpenAI API,
+# so this runs on a standard GitHub-hosted runner — no self-hosted box, no Ollama.
 #
-# Add GROQ_API_KEY to your repo's Actions secrets (Settings → Secrets → Actions).
-#
-# Start in dry-run mode (comment printed to the job summary only). Switch to
-# mode: post once you're happy, to have Sentinel comment on the PR.
+# Add OPENAI_API_KEY to the repo's Actions secrets (Settings → Secrets and variables →
+# Actions). mode: post has Sentinel comment its Memory Review card on the PR.
 
 name: Sentinel
 
@@ -21,11 +18,20 @@ permissions:
 
 jobs:
   sentinel:
-    runs-on: self-hosted   # the machine running Ollama
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run Sentinel
         uses: ./
         with:
-          mode: dry-run     # change to "post" to comment on the PR
-          groq-api-key: ${{ secrets.GROQ_API_KEY }}
+          mode: post
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # LLM: OpenAI gpt-4o-mini
+          llm-provider: openai
+          llm-model: gpt-4o-mini
+          llm-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # Embeddings: OpenAI text-embedding-3-small (no Ollama)
+          embedding-provider: openai
+          embedding-model: text-embedding-3-small
+          embedding-dimensions: "1536"
+          embedding-api-key: ${{ secrets.OPENAI_API_KEY }}

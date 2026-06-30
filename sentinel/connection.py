@@ -81,10 +81,19 @@ async def setup_cognee() -> None:
         cognee.config.set_llm_endpoint(os.environ["LLM_ENDPOINT"])
     cognee.config.set_llm_api_key(api_key)
 
-    cognee.config.set_embedding_provider(os.environ["EMBEDDING_PROVIDER"])
+    embedding_provider = os.environ["EMBEDDING_PROVIDER"]
+    cognee.config.set_embedding_provider(embedding_provider)
     cognee.config.set_embedding_model(os.environ["EMBEDDING_MODEL"])
-    cognee.config.set_embedding_endpoint(os.environ["EMBEDDING_ENDPOINT"])
     cognee.config.set_embedding_dimensions(int(os.environ["EMBEDDING_DIMENSIONS"]))
+    if embedding_provider == "openai":
+        # OpenAI embeddings: use OpenAI's own endpoint (do NOT set a local one) + an API key.
+        # Lets the Action run on a GitHub-hosted runner with no Ollama (everything on OpenAI).
+        emb_key = (os.environ.get("EMBEDDING_API_KEY") or api_key or "").strip()
+        if emb_key:
+            cognee.config.set_embedding_api_key(emb_key)
+    elif os.environ.get("EMBEDDING_ENDPOINT"):
+        # Local Ollama (or another self-hosted) embeddings need the explicit endpoint.
+        cognee.config.set_embedding_endpoint(os.environ["EMBEDDING_ENDPOINT"])
 
     _assert_embedding_service_running()
 
