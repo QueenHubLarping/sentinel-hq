@@ -33,35 +33,59 @@ def test_render_comment_no_reversal():
         reverses_decision=False,
     )
     comment = render_comment(v)
-    assert "✅" in comment
-    assert "no past decision" in comment.lower()
+    # The calm "nothing contradicted" Memory Review note.
+    assert "Memory Review" in comment
+    assert "no active learning" in comment.lower()
+    assert "[!CAUTION]" not in comment
 
 
-def test_render_comment_reversal_contains_key_fields():
+def test_render_comment_approved_reversal_is_confident_card():
     v = Verdict(
         analysis="Removes async Celery dispatch, adds inline SMTP.",
         reverses_decision=True,
-        decision_reference="ADR-001 (async email)",
+        decision_reference="PR #42 (async email)",
         original_reasoning="800ms SMTP block was the single biggest latency driver.",
         impact_if_merged="Reintroduces 800ms blocking SMTP call in checkout.",
         confidence=0.9,
+        provenance_tier="approved",
     )
     comment = render_comment(v)
-    assert "⚠️" in comment
-    assert "ADR-001" in comment
+    # Approved tier → the loud, confident supersession card.
+    assert "[!CAUTION]" in comment
+    assert "Memory Review" in comment
+    assert "PR #42" in comment
     assert "800ms" in comment
     assert "90%" in comment
     assert "/sentinel intentional" in comment
+
+
+def test_render_comment_inferred_reversal_is_soft_proposal():
+    v = Verdict(
+        analysis="Removes async dispatch.",
+        reverses_decision=True,
+        decision_reference="PR #42 (async email)",
+        original_reasoning="latency",
+        impact_if_merged="reintroduces latency",
+        confidence=0.63,
+        provenance_tier="inferred",
+    )
+    comment = render_comment(v)
+    # Inferred tier → soft proposal, never the loud CAUTION styling.
+    assert "[!CAUTION]" not in comment
+    assert "[!NOTE]" in comment
+    assert "Possible" in comment or "possible" in comment
+    assert "PR #42" in comment
 
 
 def test_render_comment_reversal_confidence_formats_as_percent():
     v = Verdict(
         analysis="x",
         reverses_decision=True,
-        decision_reference="ADR-001",
+        decision_reference="PR #42",
         original_reasoning="r",
         impact_if_merged="i",
         confidence=0.75,
+        provenance_tier="approved",
     )
     assert "75%" in render_comment(v)
 
@@ -251,7 +275,6 @@ def test_render_comment_suppressed_is_quiet_note():
         decision_reference="ADR-001 (async email)", suppressed_by_feedback=True,
     )
     comment = render_comment(v)
-    assert "🔕" in comment
     assert "muted" in comment.lower()
     assert "ADR-001" in comment
     # A muted flag must NOT render the loud CAUTION card.
@@ -270,17 +293,18 @@ def test_render_feedback_recorded_confirms_drift():
 # ---------------------------------------------------------------------------
 
 def test_dismissal_file_roundtrip_and_idempotent(tmp_path, monkeypatch):
-    monkeypatch.setenv("SENTINEL_ADR_DIR", str(tmp_path))
+    # dismissed_file() now lives under .sentinel/ (sentinel_dir, driven by SENTINEL_RETIRED_DIR).
+    monkeypatch.setenv("SENTINEL_RETIRED_DIR", str(tmp_path))
     assert file_dismissed_signatures() == set()
 
-    record_noise_file("ADR-001 (async email)")
-    record_noise_file("ADR-001 something else")  # same signature — idempotent
-    record_noise_file("ADR-003 (rate limiting)")
+    record_noise_file("PR #42 (async email)")
+    record_noise_file("PR #42 something else")  # same signature — idempotent
+    record_noise_file("PR #19 (rate limiting)")
 
-    assert file_dismissed_signatures() == {"ADR-001", "ADR-003"}
+    assert file_dismissed_signatures() == {"PR-42", "PR-19"}
     # One entry per signature despite the repeated dismissal.
     body = dismissed_file().read_text(encoding="utf-8")
-    assert body.count("ADR-001") == 1
+    assert body.count("PR-42") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -388,3 +412,136 @@ def test_build_mermaid_renders_typed_subgraph():
 
 def test_build_mermaid_empty_when_decision_absent():
     assert build_mermaid(_NBID, _EDGES, "ADR-999 (missing)") == ""
+
+
+# ===========================================================================
+# PR-keyed decision identity, trust tiers, retired ledger, API snapshot
+# (the API-only / no-markdown re-anchor — PRODUCT_SPEC §3 / §8.1)
+# ===========================================================================
+import json as _json  # noqa: E402
+
+from sentinel.resolve import _pr_number, decision_ref_from_text  # noqa: E402
+from sentinel.retired import (  # noqa: E402
+    record_retired,
+    retired_data_ids,
+    retired_pr_numbers,
+)
+from sentinel.sources import incoming_text, issue_to_doc  # noqa: E402
+from sentinel.trust import provenance_tier  # noqa: E402
+
+
+# --- _pr_number: PR-keyed reference parsing (the new decision identity) ---
+
+def test_pr_number_hash_form():
+    assert _pr_number("PR #42 (async email)") == 42
+
+
+def test_pr_number_hyphen_and_space_forms():
+    assert _pr_number("PR-19") == 19
+    assert _pr_number("PR 31 postgres") == 31
+    assert _pr_number("pr#7 something") == 7
+
+
+def test_pr_number_no_match_returns_none():
+    assert _pr_number("ADR-001 only") is None
+    assert _pr_number("") is None
+
+
+def test_decision_ref_from_text_extracts_pr():
+    body = "> ## 🧠 Memory Review\nThis would supersede **PR #42 (async email)**. /sentinel intentional"
+    assert decision_ref_from_text(body) == "PR #42"
+    assert decision_ref_from_text("no pr here") == ""
+
+
+# --- feedback_signature is now PR-keyed first, ADR for back-compat ---
+
+def test_feedback_signature_pr_keyed():
+    assert feedback_signature("PR #42 (async email)") == "PR-42"
+    assert feedback_signature("PR-19") == "PR-19"
+    # legacy ADR refs still collapse correctly
+    assert feedback_signature("ADR-001 (x)") == "ADR-001"
+
+
+# --- retired.json ledger (the durable forget backstop, replaces ADR supersede) ---
+
+def test_retired_ledger_roundtrip_and_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("SENTINEL_RETIRED_DIR", str(tmp_path))
+    assert retired_pr_numbers() == set()
+    assert retired_data_ids() == set()
+
+    record_retired("PR #42 (async email)", pr_number=42, data_ids=["id-a", "id-b"])
+    record_retired("PR #42 again", pr_number=42, data_ids=["id-a"])  # same key — idempotent
+
+    assert retired_pr_numbers() == {42}
+    assert retired_data_ids() == {"id-a", "id-b"}
+    ledger = _json.loads((tmp_path / ".sentinel" / "retired.json").read_text())
+    assert len([e for e in ledger if e["pr_number"] == 42]) == 1
+
+
+# --- trust tier: only approved PRs drive the confident flag (minimal M9) ---
+
+def test_provenance_tier_approved_via_env(monkeypatch):
+    monkeypatch.setenv("SENTINEL_APPROVED_PRS", "42, 31")
+    monkeypatch.delenv("SENTINEL_RETIRED_DIR", raising=False)
+    assert provenance_tier("PR #42 (async email)") == "approved"
+    assert provenance_tier("PR #31 (postgres)") == "approved"
+
+
+def test_provenance_tier_inferred_when_not_approved(monkeypatch):
+    monkeypatch.setenv("SENTINEL_APPROVED_PRS", "42")
+    assert provenance_tier("PR #99 (unknown)") == "inferred"
+    assert provenance_tier("no pr reference") == "inferred"  # conservative default
+
+
+# --- issue_to_doc: live/snapshot issue → ingestible tagged doc (pure) ---
+
+def test_issue_to_doc_renders_tagged_markdown():
+    label, content = issue_to_doc({
+        "number": 91,
+        "title": "Black Friday checkout latency regression",
+        "body": "p95 climbed to 1340ms; ~800ms was a blocking provider call.",
+        "author": "@daniel-osei",
+        "state": "closed",
+        "created_at": "2024-08-12T09:00:00Z",
+        "labels": ["incident", "latency"],
+    })
+    assert label == "ISSUE-91.md"
+    assert "[source_type: Issue]" in content
+    assert "[issue_number: 91]" in content
+    assert "[author: daniel-osei]" in content   # leading @ stripped
+    assert "[status: closed]" in content
+    assert "[date: 2024-08-12]" in content        # date only
+    assert "[labels: incident, latency]" in content
+    assert "# Issue #91: Black Friday checkout latency regression" in content
+    # data_id derives from the label, so forget/dedup work on live issues too.
+    assert corpus_file_data_id("ISSUE-91.md") == corpus_file_data_id(label)
+
+
+# --- API snapshot is the offline memory source (no markdown) ---
+
+def test_gather_memory_reads_snapshot(tmp_path, monkeypatch):
+    from sentinel import sources
+    snap = tmp_path / "snap.json"
+    snap.write_text(_json.dumps({
+        "prs": [
+            {"number": 42, "title": "async email", "body": "queue", "author": "p",
+             "merged_at": "2024-08-16T12:00:00Z", "files": ["checkout/views.py"]},
+            {"number": 57, "title": "sync email", "body": "inline", "author": "n",
+             "merged_at": None, "files": []},  # open reversal — not memory
+        ],
+        "issues": [{"number": 91, "title": "incident", "body": "latency", "author": "d",
+                    "state": "closed", "created_at": "2024-08-12T09:00:00Z", "labels": []}],
+        "incoming": [{"number": 57, "slug": "sync_email", "title": "sync", "state": "open",
+                      "text": "make email synchronous"}],
+    }), encoding="utf-8")
+    monkeypatch.setenv("SENTINEL_API_SNAPSHOT", str(snap))
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    prs, issues = sources.gather_memory()
+    assert {p["number"] for p in prs} == {42, 57}
+    assert {i["number"] for i in issues} == {91}
+    assert sources.refreshing_live() is False
+    assert incoming_text("sync_email") == "make email synchronous"
+    assert incoming_text(57) == "make email synchronous"
+    assert incoming_text("missing") == ""

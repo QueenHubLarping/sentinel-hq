@@ -80,8 +80,8 @@ async def main() -> int:
         print("-> graph empty; ingesting corpus (one-time)...")
         await ingest_corpus()
 
-    pr_path = Path(__file__).resolve().parent.parent / "samples" / "incoming_pr_57_sync_email.md"
-    pr_text = pr_path.read_text(encoding="utf-8")
+    from sentinel import sources
+    pr_text = sources.incoming_text("sync_email")  # incoming reversal PR from the API snapshot
     query = _recall_query(pr_text)
 
     # Pick a pure-vector search type, with a documented fallback if the build differs.

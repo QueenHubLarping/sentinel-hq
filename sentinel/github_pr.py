@@ -81,9 +81,9 @@ def find_flagged_decision_text(number: int) -> str:
     comments = _api(f"/repos/{repo}/issues/{number}/comments?per_page=100") or []
     for c in reversed(comments):
         body = c.get("body", "")
-        # Matches both the old ("reverses a past decision") and new ("reverses a past
-        # engineering decision") reversal-comment headlines.
-        if "reverses a past" in body:
+        # The reliable marker across every Sentinel flag card (the Memory Review card and the
+        # legacy reversal card both carry the CTA); also matches old "reverses a past" headlines.
+        if "/sentinel intentional" in body or "Memory Review" in body or "reverses a past" in body:
             return body
     return ""
 

@@ -1,376 +1,116 @@
 """
-Sentinel corpus ingestion — reads corpus/ and builds the decision knowledge
-graph in LOCAL self-hosted Cognee (Ollama-backed; nothing leaves the laptop).
+Sentinel `remember` — build the decision memory graph in self-hosted Cognee.
 
-This is the `remember` phase, done as two steps:
-  cognee.add()      — stage each document into the dataset
-  cognee.cognify()  — extract entities and build the graph across all documents
+Memory is reconstructed from the team's REAL GitHub history — merged PRs (the WHAT) and
+their linked issues (the WHY) — pulled from the GitHub API (see sentinel.sources). There is
+NO hand-authored markdown corpus and no `memory/` directory. For offline / demo runs the
+API responses are replayed from a cached JSON snapshot (`.sentinel/api_snapshot.json`), so a
+judge never has to trust the network on stage — but every byte still originated from the API.
 
-Each ADR / PR / Slack file is added separately and tagged with its source type so
-cognify can extract *cross-document* relationships — the multi-hop chain Sentinel
-relies on (PR --reverses--> EngineeringDecision --justified_by--> ArchitecturalReason).
+  cognee.add()      — stage each PR / issue doc (stable, addressable data_id)
+  cognee.cognify()  — extract entities + typed cross-document edges; the multi-hop chain:
+                      incoming PR --reverses--> EngineeringDecision(PR) --justified_by--> Incident(Issue)
 
-corpus/
-  adrs/   — Architecture Decision Records   (source_type: ADR)
-  slack/  — static "Slack" exports          (source_type: Slack)
-  prs/    — PR metadata                      (source_type: PR)
+The rationale lives in the incident ISSUE, never in the PR diff — that separation is what
+makes the SPINE-1 graph-only hop real (the incoming PR shares no words and no #ref with the
+issue holding the why).
 """
 
 import os
-import re
 from pathlib import Path
 from uuid import UUID, uuid5
 
 import cognee
 from cognee.tasks.ingestion.data_item import DataItem
 
+# Legacy path constant — the bundled markdown corpus is removed; this only anchors the
+# improve-loop's dismissal-file fallback (see adr_dir) and resolve's dormant ADR path.
 CORPUS_DIR = Path(__file__).parent.parent / "corpus"
 DATASET_NAME = "sentinel_decisions"
 
-# Fixed namespace so data_ids are stable across runs — lets resolve.py do
-# selective forget by data_id without querying the DB each time.
+# Fixed namespace so data_ids are stable across runs — lets resolve.py do selective forget
+# by data_id, and the retired-skip work, without querying internal Cognee dataset APIs.
 _SENTINEL_NS = UUID("7c9e6679-7425-40de-944b-e07fc1f90ae7")
 
 
-def corpus_file_data_id(filename: str) -> UUID:
-    """Return the stable data_id for a corpus file given its basename."""
-    return uuid5(_SENTINEL_NS, filename)
+def corpus_file_data_id(label: str) -> UUID:
+    """Return the stable data_id for an ingested document given its label (e.g. 'PR-42.md').
+
+    Deterministic so selective forget (resolve.py) and the retired-skip target the same id
+    that ingest assigned at add() time, across CI runner restarts.
+    """
+    return uuid5(_SENTINEL_NS, label)
+
+
+def prs_dir() -> Path:
+    """Legacy path constant (bundled PR markdown removed; kept for resolve's glob fallback)."""
+    return CORPUS_DIR / "prs"
 
 
 def adr_dir() -> Path:
-    """Resolve the directory Sentinel reads ADRs from.
+    """Directory the improve-loop's durable dismissal file falls back to.
 
-    ADRs are the one source that lives in the *consuming* repository, so the team
-    edits them where they work — not inside Sentinel. Resolution order:
-
-      1. SENTINEL_ADR_DIR        — explicit override (set in a workflow if ADRs
-                                   live somewhere other than docs/adr).
-      2. $GITHUB_WORKSPACE/docs/adr — the checked-out repo when running inside a
-                                   GitHub Action (e.g. sentinel-test-repo).
-      3. corpus/adrs             — the bundled demo corpus (local dev / tests).
-
-    data_ids derive from the file *basename* (see corpus_file_data_id), so a given
-    ADR keeps a stable id regardless of which directory it was read from — selective
-    forget in resolve.py keeps working across this switch.
+    Resolution: SENTINEL_ADR_DIR override → $GITHUB_WORKSPACE → CORPUS_DIR/adrs. (The ADR
+    *corpus* is gone; this only locates the small `.sentinel-dismissed` file in CI/dev.)
     """
     explicit = os.environ.get("SENTINEL_ADR_DIR")
-    if explicit and Path(explicit).is_dir():
+    if explicit:
         return Path(explicit)
-
     workspace = os.environ.get("GITHUB_WORKSPACE")
     if workspace:
-        repo_adrs = Path(workspace) / "docs" / "adr"
-        if repo_adrs.is_dir():
-            return repo_adrs
-
+        return Path(workspace)
     return CORPUS_DIR / "adrs"
 
 
-def _iter_corpus_files():
-    """Yield (path, source_type) for every document Sentinel ingests.
-
-    ADRs come from the consuming repo (see adr_dir); Slack threads and historical PR
-    metadata still come from the bundled corpus until live connectors exist for them.
-    """
-    for path in sorted(adr_dir().glob("*.md")):
-        yield path, "ADR"
-    for subdir, source_type in (("slack", "Slack"), ("prs", "PR")):
-        for path in sorted((CORPUS_DIR / subdir).glob("*.md")):
-            yield path, source_type
-
-
-# ---------------------------------------------------------------------------
-# Metadata extraction helpers (Task 1 + Task 3)
-# ---------------------------------------------------------------------------
-
-def _parse_cross_refs(content: str, meta: dict) -> None:
-    """
-    Parse the '## Cross-References' section of a corpus file into meta (in-place).
-
-    Keys already present in meta (e.g. from frontmatter) are skipped — cross-refs
-    never overwrite or duplicate authoritative frontmatter values.  The one
-    exception: repeated occurrences of the *same* key within the cross-refs block
-    itself (e.g. two 'related_to' lines) are merged with ', '.
-    """
-    m = re.search(r'## Cross-References\s*\n(.*?)(?=\n## |\Z)', content, re.DOTALL)
-    if not m:
-        return
-    # Track which keys we set from this cross-refs block (distinct from pre-existing keys)
-    seen_in_section: set = set()
-    for line in m.group(1).splitlines():
-        line = line.strip().lstrip("- ").strip()
-        if ":" not in line:
-            continue
-        k, _, v = line.partition(":")
-        k, v = k.strip(), v.strip()
-        if not k or not v:
-            continue
-        if k not in meta:
-            # New key — set it and note that it came from this block
-            meta[k] = v
-            seen_in_section.add(k)
-        elif k in seen_in_section:
-            # Repeated key within this same cross-refs block — merge (e.g. two related_to lines)
-            meta[k] = meta[k] + ", " + v
-        # else: key was already in meta before this call (e.g. from frontmatter) — skip
-
-
-def _extract_metadata(path: Path, source_type: str) -> dict:
-    """
-    Extract structured metadata from a corpus file.
-
-    Reads the file at *path* and parses frontmatter-style bold headers
-    (**Field:** value) plus the optional '## Cross-References' section.
-
-    Fault-tolerant: never raises — if any step fails the returned dict
-    contains whatever was successfully collected up to that point, and the
-    caller falls back to the bare tag header.
-    """
-    meta: dict = {}
-    try:
-        content = path.read_text(encoding="utf-8")
-
-        if source_type == "ADR":
-            # --- Frontmatter-style bold fields (**Label:** value) ---
-            for label, key in [
-                ("Status", "status"),
-                ("Date", "date"),
-                ("Author", "author"),
-                ("Component", "component"),
-            ]:
-                m = re.search(rf'\*\*{label}:\*\*\s*(.+)', content)
-                if m:
-                    meta[key] = m.group(1).strip()
-
-            # Strip leading '@' from author handle
-            if "author" in meta:
-                meta["author"] = meta["author"].lstrip("@")
-
-            # Decision summary: pull the descriptive title from the H1 heading
-            # (most reliable single-line source; strip "ADR-NNN: " prefix)
-            m = re.search(r'^# ADR-\d+[:\s]+(.+)', content, re.MULTILINE)
-            if m:
-                meta["decision"] = m.group(1).strip()[:80]
-
-            # Task 3 — decision_status: active unless Status explicitly says Superseded
-            status_val = meta.get("status", "")
-            meta["decision_status"] = (
-                "superseded" if "superseded" in status_val.lower() else "active"
-            )
-
-            # Cross-references (implements:, discussed_in:, …) added by Task 2
-            _parse_cross_refs(content, meta)
-
-        elif source_type == "PR":
-            # PR number from filename (e.g. "PR-42-implement-async-email.md" → "42")
-            m = re.match(r'PR-(\d+)', path.name)
-            if m:
-                meta["pr_number"] = m.group(1)
-
-            # Frontmatter fields
-            for label, key in [
-                ("Author", "author"),
-                ("Date", "date"),
-                ("Status", "status"),
-                ("Component", "component"),
-            ]:
-                m = re.search(rf'\*\*{label}:\*\*\s*(.+)', content)
-                if m:
-                    meta[key] = m.group(1).strip()
-            if "author" in meta:
-                meta["author"] = meta["author"].lstrip("@")
-
-            # Cross-references first — they contain clean filenames for 'implements'
-            # (e.g. "ADR-001-async-email.md") which are better for graph linking than
-            # the free-text "## Implements" body section.
-            _parse_cross_refs(content, meta)
-
-            # Fall back to body extraction for 'implements' if cross-refs didn't supply it
-            if "implements" not in meta:
-                m = re.search(r'## Implements\s*\n+(.+)', content)
-                if m:
-                    meta["implements"] = m.group(1).strip()
-                else:
-                    m = re.search(r'\bImplements\s+(ADR-\d+)', content, re.IGNORECASE)
-                    if m:
-                        meta["implements"] = m.group(1)
-
-        elif source_type == "Slack":
-            for label, key in [("Channel", "channel"), ("Date", "date")]:
-                m = re.search(rf'\*\*{label}:\*\*\s*(.+)', content)
-                if m:
-                    meta[key] = m.group(1).strip()
-
-            # Unique @handles in bold, deduplicated in encounter order
-            raw = re.findall(r'\*\*(@[\w-]+)\*\*', content)
-            seen: list = list(dict.fromkeys(raw))
-            if seen:
-                meta["participants"] = ", ".join(seen)
-
-            _parse_cross_refs(content, meta)
-
-    except Exception:
-        pass  # fault-tolerant: return whatever was collected so far
-    return meta
-
-
-def _build_header(path: Path, source_type: str, meta: dict) -> str:
-    """
-    Build the enriched multi-line tag header prepended to each corpus document.
-
-    Groups tags logically onto up to three lines:
-      Line 1 — identity + status/date + decision_status (ADR only)
-      Line 2 — component, author, decision summary / pr_number / participants
-      Line 3 — cross-document links (implements, discussed_in, related_to)
-
-    Falls back gracefully when meta fields are absent.
-    """
-    name = path.name
-
-    def _tag(k: str) -> str:
-        v = meta.get(k, "")
-        return f"[{k}: {v}]" if v else ""
-
-    if source_type == "ADR":
-        line1_parts = [
-            f"[source_type: {source_type}]",
-            f"[file: {name}]",
-        ] + [t for t in (_tag("status"), _tag("date"), _tag("decision_status")) if t]
-
-        line2_parts = [
-            t for t in (_tag("component"), _tag("author"), _tag("decision")) if t
-        ]
-
-        line3_parts = [
-            t for t in (_tag("implements"), _tag("discussed_in"), _tag("related_to")) if t
-        ]
-
-        lines = [" ".join(line1_parts)]
-        if line2_parts:
-            lines.append(" ".join(line2_parts))
-        if line3_parts:
-            lines.append(" ".join(line3_parts))
-        return "\n".join(lines)
-
-    elif source_type == "PR":
-        line1_parts = [f"[source_type: {source_type}]", f"[file: {name}]"]
-        if meta.get("pr_number"):
-            line1_parts.append(f"[pr_number: {meta['pr_number']}]")
-        line1_parts += [t for t in (_tag("status"), _tag("date")) if t]
-
-        line2_parts = [
-            t for t in (
-                _tag("component"), _tag("author"),
-                _tag("implements"), _tag("discussed_in"),
-            ) if t
-        ]
-
-        lines = [" ".join(line1_parts)]
-        if line2_parts:
-            lines.append(" ".join(line2_parts))
-        return "\n".join(lines)
-
-    elif source_type == "Slack":
-        line1_parts = [f"[source_type: {source_type}]", f"[file: {name}]"]
-        line1_parts += [t for t in (_tag("channel"), _tag("date")) if t]
-
-        line2_parts = [
-            t for t in (
-                _tag("participants"), _tag("related_to"), _tag("component"),
-            ) if t
-        ]
-
-        lines = [" ".join(line1_parts)]
-        if line2_parts:
-            lines.append(" ".join(line2_parts))
-        return "\n".join(lines)
-
-    # Unknown source type — bare fallback
-    return f"[source_type: {source_type}] [file: {name}]"
-
-
-# ---------------------------------------------------------------------------
-# Main ingestion pipeline
-# ---------------------------------------------------------------------------
-
-def _memory_file_sources() -> list[tuple[Path, str]]:
-    """The on-disk documents to ingest, REAL sources first.
-
-    Inside a GitHub Action we read the consuming repo's own history: its decision docs
-    (ADRs/RFCs/etc. from the checkout) and attached Slack-export files. Merged PRs are
-    fetched from the API separately (see ingest_corpus). Outside an Action (local dev /
-    tests) we fall back to the bundled demo corpus so everything still runs offline.
-    """
-    from sentinel import sources
-
-    if not sources.in_github_action():
-        return list(_iter_corpus_files())  # bundled demo corpus (adrs + slack + prs)
-
-    docs: list[tuple[Path, str]] = sources.repo_decision_docs()
-    if not docs:  # repo has no docs/adr etc. — still read the resolved ADR dir
-        docs = [(p, "ADR") for p in sorted(adr_dir().glob("*.md"))]
-
-    slack = sources.slack_export_paths()
-    if not slack:  # no Slack export attached — use the bundled threads as an example
-        slack = sorted((CORPUS_DIR / "slack").glob("*.md"))
-    docs += [(p, "Slack") for p in slack]
-    return docs
-
-
 async def ingest_corpus() -> None:
-    from sentinel import sources
+    """Stage merged PRs + linked issues (from the API or the cached snapshot) and cognify.
 
-    files = _memory_file_sources()
-    real = sources.in_github_action()
-    print(f"-> Staging {len(files)} document(s) into Cognee "
-          f"({'live repo history' if real else 'bundled demo corpus'})...")
+    Only MERGED PRs become memory (the establishing decisions); open PRs are the changes
+    under review, not history. Issues carry the rationale. A retired decision (recorded in
+    `.sentinel/retired.json` by '/sentinel intentional') is skipped — this is how forget
+    takes durable effect on an ephemeral runner with no graph persistence.
+    """
+    from sentinel import sources
+    from sentinel.retired import retired_data_ids, retired_pr_numbers
+
+    prs, issues = sources.gather_memory()
+    merged = [pr for pr in prs if pr.get("merged_at")]
+    src = "live GitHub API" if sources.refreshing_live() else "cached API snapshot"
+    print(f"-> Staging {len(merged)} PR(s) + {len(issues)} issue(s) into Cognee ({src})...")
+
+    retired_nums = retired_pr_numbers()
+    retired_ids = retired_data_ids()
 
     staged = 0
-    for path, source_type in files:
-        content = path.read_text(encoding="utf-8")
-        # Build enriched metadata header; fall back to bare tag on any error.
-        try:
-            meta = _extract_metadata(path, source_type)
-            # A superseded ADR is a *retired* decision — no longer institutional
-            # memory — so we leave it out of the graph entirely. This is how
-            # '/sentinel intentional' takes durable effect on ephemeral CI runners:
-            # the resolve step sets the ADR's status to Superseded in docs/adr, and
-            # the next ingest simply doesn't add it, so detection stops flagging PRs
-            # that contradict it. (No graph persistence required.)
-            if source_type == "ADR" and meta.get("decision_status") == "superseded":
-                print(f"   - skipping {path.name} (ADR superseded — retired from memory)")
-                continue
-            header = _build_header(path, source_type, meta)
-        except Exception:
-            header = f"[source_type: {source_type}] [file: {path.name}]"
-        tagged = f"{header}\n\n{content}"
-        # DataItem gives each file a stable, addressable data_id (for selective forget)
-        # and a human-readable label (the filename) visible in datasets.list_data().
-        item = DataItem(
-            data=tagged,
-            label=path.name,
-            data_id=corpus_file_data_id(path.name),
+    for pr in merged:
+        label, content = sources.pr_to_doc(pr)
+        data_id = corpus_file_data_id(label)
+        num = pr.get("number")
+        if str(data_id) in retired_ids or (isinstance(num, int) and num in retired_nums):
+            print(f"   - skipping {label} (decision retired via /sentinel intentional)")
+            continue
+        await cognee.add(
+            DataItem(data=content, label=label, data_id=data_id), dataset_name=DATASET_NAME
         )
-        await cognee.add(item, dataset_name=DATASET_NAME)
         staged += 1
-        print(f"   + {path.name} ({source_type})")
+        print(f"   + {label} (PR: \"{(pr.get('title') or '')[:48]}\")")
 
-    # Real merged PRs — the team's actual "why" — fetched from the GitHub API for the
-    # repo the Action runs in. This is what makes the corpus REAL (no seeded PR files).
-    # Best-effort: remember must still build a graph if the API is unreachable.
-    if real and os.environ.get("SENTINEL_INGEST_PRS", "true").lower() != "false":
-        limit = int(os.environ.get("SENTINEL_PR_LIMIT", "25") or 25)
-        try:
-            prs = sources.fetch_merged_prs(limit)
-        except Exception as exc:  # noqa: BLE001 — degrade gracefully
-            print(f"   (live PR ingest skipped: {exc})")
-            prs = []
-        for pr in prs:
-            label, content = sources.pr_to_doc(pr)
-            item = DataItem(data=content, label=label, data_id=corpus_file_data_id(label))
-            await cognee.add(item, dataset_name=DATASET_NAME)
-            staged += 1
-            print(f"   + {label} (PR, live: \"{pr['title'][:48]}\")")
+    for issue in issues:
+        label, content = sources.issue_to_doc(issue)
+        await cognee.add(
+            DataItem(data=content, label=label, data_id=corpus_file_data_id(label)),
+            dataset_name=DATASET_NAME,
+        )
+        staged += 1
+        print(f"   + {label} (Issue: \"{(issue.get('title') or '')[:48]}\")")
+
+    if staged == 0:
+        print(
+            "   (!) nothing to ingest — no API snapshot and no GitHub creds. "
+            "Run scripts/seed_demo_repo.py to create the demo data + snapshot, "
+            "or set GITHUB_REPOSITORY + GITHUB_TOKEN to fetch live."
+        )
+        return
 
     print(f"-> cognify() — extracting entities + building graph from {staged} doc(s)...")
     await cognee.cognify(datasets=[DATASET_NAME])

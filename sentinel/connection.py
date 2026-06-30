@@ -23,6 +23,11 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 _DEFAULTS = {
     "ENABLE_BACKEND_ACCESS_CONTROL": "false",  # local single-user; no multi-tenant auth
     "TELEMETRY_DISABLED": "1",
+    # Pin the graph store to Ladybug. The improve() feedback loop depends on the Ladybug
+    # adapter's get/set_node_feedback_weights (+ edge equivalents); the Kuzu adapter does
+    # NOT implement them, so a different default would make 👎-suppression silently no-op.
+    # Ladybug is cognee 1.2.2's default, but pinning it removes the demo-day landmine.
+    "GRAPH_DATABASE_PROVIDER": "ladybug",
     "CACHING": "false",  # disable session-memory cache so forget shows in recall immediately
     # Cognee routes this LiteLLM-prefixed model to Groq. Groq needs no endpoint.
     "LLM_PROVIDER": "custom",

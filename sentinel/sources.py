@@ -14,7 +14,9 @@ for this repo's own PRs. When run OUTSIDE a GitHub Action (local dev / tests), c
 fall back to the bundled demo corpus — see ingest.ingest_corpus.
 """
 
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sentinel.github_pr import _api
@@ -33,6 +35,116 @@ def repo_slug() -> str | None:
 def in_github_action() -> bool:
     """True when we can read this repo's real history (repo + token present)."""
     return bool(repo_slug() and os.environ.get("GITHUB_TOKEN"))
+
+
+def has_api_creds() -> bool:
+    """True when a repo + token are configured, so we can hit the GitHub API."""
+    return bool(repo_slug() and os.environ.get("GITHUB_TOKEN"))
+
+
+# ---------------------------------------------------------------------------
+# JSON snapshot — the offline-safe replay of API responses (no markdown corpus)
+# ---------------------------------------------------------------------------
+# Everything Sentinel remembers comes from the GitHub API. To keep the live demo off the
+# network (PRODUCT_SPEC §13: never depend on the network on stage) we cache the raw API
+# responses to a JSON snapshot and replay from it. It is still 100% API-sourced data —
+# just recorded. The seed script (scripts/seed_demo_repo.py) writes it after creating the
+# demo PRs/issues; `gather_memory` reads it when there are no live creds.
+
+_USED_LIVE = False  # set by gather_memory so callers can report the source
+
+
+def snapshot_path() -> Path:
+    """Path to the cached API snapshot (override with SENTINEL_API_SNAPSHOT)."""
+    override = os.environ.get("SENTINEL_API_SNAPSHOT")
+    if override:
+        return Path(override)
+    from sentinel.retired import sentinel_dir
+
+    return sentinel_dir() / "api_snapshot.json"
+
+
+def load_snapshot() -> dict | None:
+    """Load the cached snapshot ({'repo','generated_at','prs':[...],'issues':[...]}) or None."""
+    path = snapshot_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:  # noqa: BLE001 — a corrupt snapshot must not break remember
+        return None
+
+
+def save_snapshot(prs: list[dict], issues: list[dict], repo: str | None = None) -> Path:
+    """Write the API responses to the snapshot cache (the seed script / a refresh calls this)."""
+    path = snapshot_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "repo": repo or repo_slug() or "",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "prs": prs,
+        "issues": issues,
+    }
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def refreshing_live() -> bool:
+    """Whether the most recent gather_memory() read from the live API (vs. the snapshot)."""
+    return _USED_LIVE
+
+
+def incoming_prs() -> list[dict]:
+    """Open PRs under review (the changes being evaluated), from the snapshot's `incoming`.
+
+    These are NOT memory — they're the PRs Sentinel reviews against memory. Each entry has
+    {number, slug, title, state, text}; `text` is the full PR text (description + diff) that
+    detect.detect_reversal consumes. Empty if there's no snapshot.
+    """
+    snap = load_snapshot()
+    return (snap.get("incoming", []) or []) if snap else []
+
+
+def incoming_text(key) -> str:
+    """The full text of an incoming PR by slug or number (for local detection/demo runs)."""
+    for pr in incoming_prs():
+        if str(pr.get("slug")) == str(key) or str(pr.get("number")) == str(key):
+            return pr.get("text", "") or ""
+    return ""
+
+
+def gather_memory(limit: int = 25) -> tuple[list[dict], list[dict]]:
+    """Return (pr_dicts, issue_dicts) for `remember` — from the live API or the snapshot.
+
+    Precedence:
+      1. live API, when creds exist AND (no snapshot yet OR SENTINEL_REFRESH_SNAPSHOT=true) —
+         the fetched responses are written to the snapshot cache as a side effect.
+      2. the cached JSON snapshot (the offline / demo default).
+      3. ([], []) when neither is available — remember degrades gracefully.
+    """
+    global _USED_LIVE
+    _USED_LIVE = False
+
+    refresh = os.environ.get("SENTINEL_REFRESH_SNAPSHOT", "false").strip().lower() == "true"
+    snap = load_snapshot()
+
+    if has_api_creds() and (snap is None or refresh):
+        try:
+            prs = fetch_merged_prs(limit)
+            issues = fetch_issues(limit)
+            _USED_LIVE = True
+            try:
+                save_snapshot(prs, issues)
+            except Exception:  # noqa: BLE001 — caching is best-effort
+                pass
+            return prs, issues
+        except Exception:  # noqa: BLE001 — fall back to the snapshot on any API error
+            pass
+
+    if snap is not None:
+        return snap.get("prs", []) or [], snap.get("issues", []) or []
+    return [], []
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +212,72 @@ def pr_to_doc(pr: dict) -> tuple[str, str]:
         header += "\n[files: " + ", ".join(pr["files"][:12]) + "]"
     body = (pr.get("body") or "").strip() or "(no description provided)"
     content = f"{header}\n\n# PR #{num}: {pr.get('title', '').strip()}\n\n{body}\n"
+    return label, content
+
+
+# ---------------------------------------------------------------------------
+# Linked issues — the rationale (the WHY) behind past decisions
+# ---------------------------------------------------------------------------
+
+def fetch_issues(limit: int = 25) -> list[dict]:
+    """Return up to *limit* most-recently-updated issues for the current repo.
+
+    The GitHub `issues` endpoint also returns pull requests — those are filtered out
+    (they carry a `pull_request` key) so only genuine issues (incidents/discussions, where
+    rationale lives) are ingested. Network-bound; callers wrap this in try/except.
+    """
+    repo = repo_slug()
+    if not repo:
+        return []
+    out: list[dict] = []
+    page = 1
+    while len(out) < limit and page <= 6:
+        batch = _api(
+            f"/repos/{repo}/issues?state=all&sort=updated&direction=desc"
+            f"&per_page=50&page={page}"
+        ) or []
+        if not batch:
+            break
+        for it in batch:
+            if it.get("pull_request"):
+                continue  # the issues endpoint also returns PRs — skip them
+            out.append({
+                "number": it["number"],
+                "title": it.get("title", "") or "",
+                "body": it.get("body") or "",
+                "author": (it.get("user") or {}).get("login", "") or "",
+                "state": it.get("state", "") or "",
+                "created_at": it.get("created_at", "") or "",
+                "labels": [
+                    lb.get("name", "") for lb in (it.get("labels") or []) if isinstance(lb, dict)
+                ],
+            })
+            if len(out) >= limit:
+                break
+        page += 1
+    return out
+
+
+def issue_to_doc(issue: dict) -> tuple[str, str]:
+    """Render an issue dict into (label, tagged_markdown) for ingestion.
+
+    PURE — no network. Mirrors pr_to_doc and ingest._build_header's Issue branch so a live
+    incident issue produces the same typed tags (issue_number, author, status) as a bundled one.
+    """
+    num = issue.get("number")
+    label = f"ISSUE-{num}.md"
+    parts = ["[source_type: Issue]", f"[file: {label}]", f"[issue_number: {num}]"]
+    if issue.get("author"):
+        parts.append(f"[author: {issue['author'].lstrip('@')}]")
+    if issue.get("state"):
+        parts.append(f"[status: {issue['state']}]")
+    if issue.get("created_at"):
+        parts.append(f"[date: {issue['created_at'][:10]}]")
+    header = " ".join(parts)
+    if issue.get("labels"):
+        header += "\n[labels: " + ", ".join(lb for lb in issue["labels"][:8] if lb) + "]"
+    body = (issue.get("body") or "").strip() or "(no description provided)"
+    content = f"{header}\n\n# Issue #{num}: {issue.get('title', '').strip()}\n\n{body}\n"
     return label, content
 
 

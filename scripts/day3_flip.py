@@ -25,8 +25,9 @@ from sentinel.comment import render_comment  # noqa: E402
 from sentinel.detect import detect_reversal  # noqa: E402
 from sentinel.ingest import ingest_corpus  # noqa: E402
 from sentinel.resolve import mark_intentional  # noqa: E402
+from sentinel import sources  # noqa: E402
 
-PR_PATH = Path(__file__).resolve().parent.parent / "samples" / "incoming_pr_57_sync_email.md"
+PR_SLUG = "sync_email"  # the incoming reversal PR in the API snapshot
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _VIS_CDN = "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"
 
@@ -166,7 +167,7 @@ async def save_graph_html(title: str, filename: str) -> None:
 
 
 async def main() -> None:
-    pr_text = PR_PATH.read_text(encoding="utf-8")
+    pr_text = sources.incoming_text(PR_SLUG)
     await setup_cognee()
 
     if await _node_count() == 0:

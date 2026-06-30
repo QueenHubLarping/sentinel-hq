@@ -6,21 +6,25 @@ maintainer confirms an override is intentional, the contradicted decision is RET
 from memory (forget). After that, re-detecting the same PR yields no reversal — the
 decision it was protecting no longer exists. This is the forget -> behavior-change loop.
 
-Selective forget: only the specific corpus document whose filename matches the contradicted
-ADR (e.g. "ADR-001-async-email.md") is removed via cognee.forget(data_id=...).
-Graph nodes and vector embeddings for that document are deleted; every other decision
-in the dataset stays intact.
+Decision identity is **PR-keyed** (PRODUCT_SPEC §3): a decision is anchored to its
+establishing PR (e.g. "PR #42 (async email)"). Selective forget removes only that
+decision's document via cognee.forget(data_id=...) — graph nodes + vector embeddings for
+that PR's doc are deleted; every other decision stays intact. The data_id is the same
+stable UUID ingest.py assigned at add() time (corpus_file_data_id of the canonical
+"PR-42.md" label), so forget works without internal Cognee dataset APIs and across CI
+runner restarts. Durability backstop = `.sentinel/retired.json` (sentinel.retired), which
+the next ingest skips — replacing the old "mark the ADR Superseded in docs/adr" trick.
 
-The data_id used for forget is the same stable UUID that ingest.py assigned at add()
-time — derived deterministically from the filename via corpus_file_data_id(). This
-avoids going through internal Cognee dataset-listing APIs, which are fragile.
+The ADR-keyed helpers below (`_adr_number`, `supersede_adr_file`, `_mark_intentional_adr`)
+are the legacy path, kept only until SPINE-2 is re-proven on the PR-keyed path (the §9
+sequencing rule). mark_intentional dispatches to PR-keyed first, ADR only as a fallback.
 """
 
 import re
 
 import cognee
 
-from sentinel.ingest import DATASET_NAME, adr_dir, corpus_file_data_id
+from sentinel.ingest import DATASET_NAME, adr_dir, corpus_file_data_id, prs_dir
 
 
 def supersede_adr_file(adr_id: str, pr_number: int | None = None):
@@ -59,17 +63,84 @@ def _adr_number(decision_reference: str) -> str | None:
     return f"ADR-{int(m.group(1)):03d}"
 
 
-async def mark_intentional(decision_reference: str = "") -> dict:
-    """Retire the superseded decision using cognee.forget, scoped to that one file.
+def _pr_number(decision_reference: str) -> int | None:
+    """Extract a PR number from a PR-keyed decision reference.
 
-    Resolves the corpus ADR file from the decision reference (e.g. 'ADR-001'),
-    then calls cognee.forget(data_id=..., dataset=DATASET_NAME), which surgically
-    removes only that document's graph nodes and vector entries.
+    Handles 'PR #42 (async email)', 'PR-42', 'PR 42', 'pr#19 ...'. Returns the int, or
+    None if no PR pattern is found. This is the PR-keyed analogue of _adr_number and the
+    new primary decision identity (PRODUCT_SPEC §3).
+    """
+    m = re.search(r"PR[\s#-]*?(\d+)", decision_reference, re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+def decision_ref_from_text(text: str) -> str:
+    """Pull a clean 'PR #N' decision reference out of a longer comment body.
+
+    Used by the '/sentinel intentional' flow to recover the decision Sentinel flagged from
+    its own prior Memory Review comment, without re-running detection. Returns '' if none.
+    """
+    m = re.search(r"PR[\s#-]*?(\d+)", text, re.IGNORECASE)
+    return f"PR #{m.group(1)}" if m else ""
+
+
+async def mark_intentional(decision_reference: str = "") -> dict:
+    """Retire the superseded decision via cognee.forget (PR-keyed), scoped to one decision.
+
+    Resolves the establishing PR from the reference (e.g. 'PR #42'), forgets that PR's
+    decision document(s) by their stable data_id, and records the retirement in
+    `.sentinel/retired.json` so the next ingest skips it (durable on ephemeral runners).
+    Falls back to the legacy ADR-keyed path only when the reference carries no PR number
+    (kept until SPINE-2 is re-proven on the PR-keyed path — §9 sequencing rule).
     """
     from cognee.low_level import setup
 
     await setup()
 
+    pr_num = _pr_number(decision_reference)
+    if pr_num is not None:
+        return await _mark_intentional_pr(decision_reference, pr_num)
+
+    # Legacy fallback: reference carries no PR number (dormant ADR path).
+    return await _mark_intentional_adr(decision_reference)
+
+
+async def _mark_intentional_pr(decision_reference: str, pr_num: int) -> dict:
+    """Forget the PR-keyed decision: every doc for this PR (live label + bundled file)."""
+    from sentinel.retired import record_retired
+
+    # The data_ids to forget: the canonical live-PR label ("PR-42.md", what sources.pr_to_doc
+    # emits) plus any bundled corpus file(s) for that PR ("PR-42-implement-async-email.md").
+    labels = {f"PR-{pr_num}.md"}
+    for path in sorted(prs_dir().glob(f"PR-{pr_num}*.md")):
+        labels.add(path.name)
+
+    retired = []
+    for label in sorted(labels):
+        data_id = corpus_file_data_id(label)
+        try:
+            result = await cognee.forget(data_id=data_id, dataset=DATASET_NAME)
+        except Exception as exc:  # noqa: BLE001 — a missing/duplicate id must not break forget
+            result = {"skipped": str(exc)}
+        retired.append({"data_id": str(data_id), "label": label, "result": result})
+
+    # Durable backstop: record in .sentinel/retired.json (next ingest skips this PR).
+    ledger = record_retired(
+        decision_reference, pr_number=pr_num, data_ids=[r["data_id"] for r in retired]
+    )
+
+    return {
+        "status": "retired",
+        "decision": decision_reference,
+        "pr_number": pr_num,
+        "retired_items": len(retired),
+        "items": retired,
+        "ledger": str(ledger),
+    }
+
+
+async def _mark_intentional_adr(decision_reference: str = "") -> dict:
+    """LEGACY ADR-keyed forget (dormant; removed after SPINE-2 re-proven — §9)."""
     adr_id = _adr_number(decision_reference)
     if not adr_id:
         return {

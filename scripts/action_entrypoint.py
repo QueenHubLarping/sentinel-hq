@@ -41,7 +41,7 @@ from sentinel.github_pr import (  # noqa: E402
 )
 from sentinel.improve import record_noise, record_noise_file  # noqa: E402
 from sentinel.ingest import ingest_corpus  # noqa: E402
-from sentinel.resolve import _adr_number, mark_intentional, supersede_adr_file  # noqa: E402
+from sentinel.resolve import decision_ref_from_text, mark_intentional  # noqa: E402
 
 
 async def _node_count() -> int:
@@ -60,45 +60,56 @@ def _write_summary(comment: str) -> None:
 async def handle_resolve() -> int:
     """Handle a '/sentinel intentional' comment: retire the flagged decision (forget).
 
-    Two transports, one verb. The DURABLE backstop: mark the ADR Superseded in docs/adr
-    on the PR branch and push it (survives a wiped graph; next ingest skips it). The REAL
-    Cognee verb, run best-effort alongside it: ``cognee.forget(data_id=...)`` via
-    mark_intentional(), which surgically removes that decision's nodes/embeddings from the
-    persistent graph so the very next detection no longer flags it. Sentinel is advisory:
-    a native-verb failure prints a warning and is swallowed — the command never breaks.
+    PR-keyed, two transports, one verb. The REAL Cognee verb: ``cognee.forget(data_id=...)``
+    via mark_intentional(), which surgically removes that PR-keyed decision's nodes/embeddings
+    from the persistent graph so the very next detection no longer flags it, AND records the
+    retirement in ``.sentinel/retired.json``. The DURABLE backstop: that ledger is committed
+    to the PR branch, so on the next ephemeral runner (no graph persistence) the re-ingest
+    skips the retired decision. (Replaces the old "mark the ADR Superseded in docs/adr" trick —
+    no ADR files, no `memory/`.) Sentinel is advisory: every failure is swallowed with a
+    warning — the command never breaks the build.
     """
     if "/sentinel intentional" not in comment_body().lower():
         print("Comment is not '/sentinel intentional'; nothing to do.")
         return 0
 
     number = issue_number()
-    adr_id = _adr_number(find_flagged_decision_text(number)) if number else None
-    if not adr_id:
+    decision_ref = decision_ref_from_text(find_flagged_decision_text(number)) if number else ""
+    if not decision_ref:
         print("No prior Sentinel reversal flag found on this PR; nothing to retire.")
         post_comment("🛡️ _Sentinel_: I couldn't find a reversal I'd flagged on this PR to retire.")
         return 0
 
-    branch = pr_head_branch(number)
-    checkout_branch(branch)
-    path = supersede_adr_file(adr_id, number)
-    if not path:
-        post_comment(f"🛡️ _Sentinel_: couldn't locate the `{adr_id}` file in `docs/adr/` to supersede.")
-        return 0
+    # Check out the PR branch first so the .sentinel/retired.json mark_intentional writes
+    # lands in this branch's workspace and can be committed as the durable backstop.
+    branch = None
+    try:
+        branch = pr_head_branch(number)
+        checkout_branch(branch)
+    except Exception as exc:  # noqa: BLE001 — advisory: no branch → skip the ledger commit, still forget
+        print(f"branch checkout skipped (ledger won't be committed): {exc}")
 
-    commit_and_push(branch, f"docs(adr): supersede {adr_id} — intentional override in #{number}")
-    print(f"-> retired {adr_id}: marked {path.name} Superseded on {branch}")
-
-    # The real Cognee verb, best-effort: genuinely forget the decision from the persistent
-    # graph (the git supersession above is the durability backstop). Never fail the command.
+    # The real Cognee verb: forget the PR-keyed decision from the persistent graph + write
+    # the retired.json ledger. Never fail the command.
     try:
         await setup_cognee()
-        result = await mark_intentional(adr_id)
+        result = await mark_intentional(decision_ref)
         print(f"-> native cognee.forget: {result.get('status')} "
-              f"({result.get('retired_items', 0)} item(s)) for {adr_id}")
+              f"({result.get('retired_items', 0)} item(s)) for {decision_ref}")
     except Exception as exc:  # noqa: BLE001 — advisory: a flaky forget must not break the command
-        print(f"native forget skipped (durable ADR supersession already applied): {exc}")
+        print(f"native forget skipped: {exc}")
 
-    post_comment(render_resolution(adr_id, number))
+    # Durable backstop: commit .sentinel/retired.json so the retirement survives a fresh runner.
+    if branch:
+        try:
+            commit_and_push(
+                branch,
+                f"chore(sentinel): retire {decision_ref} — intentional override in #{number}",
+            )
+        except Exception as exc:  # noqa: BLE001 — advisory: commit failure must not break the command
+            print(f"ledger commit skipped: {exc}")
+
+    post_comment(render_resolution(decision_ref, number))
     return 0
 
 
@@ -117,29 +128,29 @@ async def handle_feedback() -> int:
         return 0
 
     number = issue_number()
-    adr_id = _adr_number(find_flagged_decision_text(number)) if number else None
-    if not adr_id:
+    decision_ref = decision_ref_from_text(find_flagged_decision_text(number)) if number else ""
+    if not decision_ref:
         print("No prior Sentinel reversal flag found on this PR; nothing to mark as noise.")
         post_comment("🛡️ _Sentinel_: I couldn't find a flag of mine on this PR to mark as noise.")
         return 0
 
     branch = pr_head_branch(number)
     checkout_branch(branch)
-    path = record_noise_file(adr_id)
-    commit_and_push(branch, f"chore(sentinel): dismiss {adr_id} drift as noise (/sentinel noise in #{number})")
-    print(f"-> dismissed {adr_id} drift as noise: updated {path.name} on {branch}")
+    path = record_noise_file(decision_ref)
+    commit_and_push(branch, f"chore(sentinel): dismiss {decision_ref} drift as noise (/sentinel noise in #{number})")
+    print(f"-> dismissed {decision_ref} drift as noise: updated {path.name} on {branch}")
 
     # The real Cognee verb, best-effort: write the 👎 into the graph via cognee.add +
     # cognify + improve (the .sentinel-dismissed file above is the durability backstop).
     # cognify/improve are LLM/embedding-heavy and can be slow/flaky — never fail the command.
     try:
         await setup_cognee()
-        result = await record_noise(adr_id, pr_number=number)
-        print(f"-> native cognee.improve: {result.get('status')} for {result.get('signature', adr_id)}")
+        result = await record_noise(decision_ref, pr_number=number)
+        print(f"-> native cognee.improve: {result.get('status')} for {result.get('signature', decision_ref)}")
     except Exception as exc:  # noqa: BLE001 — advisory: a flaky improve must not break the command
         print(f"native improve skipped (durable dismissal already recorded): {exc}")
 
-    post_comment(render_feedback_recorded(adr_id, number))
+    post_comment(render_feedback_recorded(decision_ref, number))
     return 0
 
 

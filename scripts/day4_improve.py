@@ -79,21 +79,18 @@ def enable_session_cache() -> None:
     if not get_cache_config().caching:
         raise RuntimeError("session cache could not be enabled; improve feedback would no-op.")
 
-SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-PR_FLAGGED = SAMPLES / "incoming_pr_61_app_ratelimit.md"           # the flag the maintainer 👎s
-PR_SIMILAR = SAMPLES / "incoming_pr_63_app_ratelimit_orders.md"    # a similar PR — does the nudge carry over?
+from sentinel import sources  # noqa: E402
+
+PR_FLAGGED_SLUG = "app_ratelimit"          # the flag the maintainer 👎s (incoming PR #61)
+PR_SIMILAR_SLUG = "app_ratelimit_orders"   # a similar PR — does the nudge carry over? (#63)
 
 
-def _pr_label(path: Path) -> str:
-    """A short human label derived from the sample filename (e.g. 'PR #61').
-
-    Kept dynamic so the script isn't hard-wired to any particular corpus — swap the sample
-    files and the output labels follow.
-    """
-    import re
-
-    m = re.search(r"pr[_-]?(\d+)", path.stem, re.IGNORECASE)
-    return f"PR #{m.group(1)}" if m else path.stem
+def _pr_label(slug: str) -> str:
+    """A short human label for an incoming PR slug (e.g. 'PR #61'), from the API snapshot."""
+    for pr in sources.incoming_prs():
+        if pr.get("slug") == slug:
+            return f"PR #{pr.get('number')}"
+    return slug
 
 
 # Weight the retriever gives to learned feedback (0..1). When every node sits at the uniform
@@ -141,9 +138,9 @@ async def _detect(pr_text: str, *, session_id: str | None):
 
 
 async def main() -> None:
-    label_a, label_b = _pr_label(PR_FLAGGED), _pr_label(PR_SIMILAR)
-    pr_a = PR_FLAGGED.read_text(encoding="utf-8")
-    pr_b = PR_SIMILAR.read_text(encoding="utf-8")
+    label_a, label_b = _pr_label(PR_FLAGGED_SLUG), _pr_label(PR_SIMILAR_SLUG)
+    pr_a = sources.incoming_text(PR_FLAGGED_SLUG)
+    pr_b = sources.incoming_text(PR_SIMILAR_SLUG)
     await setup_cognee()
     enable_session_cache()  # must run after cognee import; else 👎 feedback is a no-op
 

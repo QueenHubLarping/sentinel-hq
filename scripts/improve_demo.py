@@ -25,8 +25,9 @@ import cognee  # noqa: E402
 from sentinel.detect import detect_reversal  # noqa: E402
 from sentinel.improve import dismissed_signatures, record_noise  # noqa: E402
 from sentinel.ingest import ingest_corpus  # noqa: E402
+from sentinel import sources  # noqa: E402
 
-DEFAULT_PR = Path(__file__).resolve().parent.parent / "samples" / "incoming_pr_57_sync_email.md"
+DEFAULT_PR_SLUG = "sync_email"  # the incoming reversal PR in the API snapshot
 
 
 async def _node_count() -> int:
@@ -46,8 +47,8 @@ def _show(label: str, v) -> None:
 
 
 async def main() -> None:
-    pr_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PR
-    pr_text = pr_path.read_text(encoding="utf-8")
+    arg = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PR_SLUG
+    pr_text = Path(arg).read_text(encoding="utf-8") if Path(arg).is_file() else sources.incoming_text(arg)
 
     await setup_cognee()
     if await _node_count() == 0:

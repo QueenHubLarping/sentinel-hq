@@ -219,8 +219,9 @@ async def reinforce(
 # signature in the graph via a marker (graph_dismissed_signatures).
 
 from cognee.tasks.ingestion.data_item import DataItem  # noqa: E402
-from sentinel.ingest import _SENTINEL_NS, adr_dir  # noqa: E402
-from sentinel.resolve import _adr_number  # noqa: E402
+from sentinel.ingest import _SENTINEL_NS  # noqa: E402
+from sentinel.resolve import _adr_number, _pr_number  # noqa: E402
+from sentinel.retired import sentinel_dir  # noqa: E402
 
 FEEDBACK_NODE_SET = "sentinel_feedback"
 
@@ -233,9 +234,13 @@ _MARKER_RE = re.compile(rf"{_MARKER}:\s*([A-Za-z0-9\-]+)")
 def feedback_signature(decision_reference: str) -> str:
     """Normalize a decision reference into a stable drift signature (the feedback key).
 
-    ADR references collapse to their canonical id ('ADR-001 (async email)' -> 'ADR-001');
-    anything else is slugified so it is still a stable, comparable key.
+    PR-keyed references collapse to their canonical id ('PR #42 (async email)' -> 'PR-42');
+    legacy ADR references collapse to 'ADR-001'; anything else is slugified so it is still a
+    stable, comparable key. PR is checked first — the new identity — ADR second (back-compat).
     """
+    pr = _pr_number(decision_reference)
+    if pr is not None:
+        return f"PR-{pr}"
     adr = _adr_number(decision_reference)
     if adr:
         return adr
@@ -300,8 +305,8 @@ async def graph_dismissed_signatures() -> set[str]:
 
 
 def dismissed_file() -> Path:
-    """Path to the durable dismissal store, next to the ADRs Sentinel reads."""
-    return adr_dir() / ".sentinel-dismissed"
+    """Path to the durable dismissal store — in `.sentinel/`, alongside retired.json."""
+    return sentinel_dir() / ".sentinel-dismissed"
 
 
 def file_dismissed_signatures() -> set[str]:

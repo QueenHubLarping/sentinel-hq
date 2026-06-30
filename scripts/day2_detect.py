@@ -23,8 +23,9 @@ import cognee  # noqa: E402
 from sentinel.comment import render_comment  # noqa: E402
 from sentinel.detect import detect_reversal  # noqa: E402
 from sentinel.ingest import ingest_corpus  # noqa: E402
+from sentinel import sources  # noqa: E402
 
-DEFAULT_PR = Path(__file__).resolve().parent.parent / "samples" / "incoming_pr_57_sync_email.md"
+DEFAULT_PR_SLUG = "sync_email"  # the incoming reversal PR in the API snapshot
 
 
 async def _node_count() -> int:
@@ -43,13 +44,21 @@ async def _ensure_graph() -> None:
 
 
 async def main() -> None:
-    pr_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PR
-    pr_text = pr_path.read_text(encoding="utf-8")
+    # Accept a file path, an incoming-PR slug/number from the snapshot, or default to sync_email.
+    arg = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PR_SLUG
+    if Path(arg).is_file():
+        pr_text, name = Path(arg).read_text(encoding="utf-8"), Path(arg).name
+    else:
+        pr_text, name = sources.incoming_text(arg), f"incoming PR '{arg}'"
+        if not pr_text:
+            print(f"No incoming PR '{arg}' in the API snapshot (.sentinel/api_snapshot.json). "
+                  "Run scripts/seed_demo_repo.py to create the demo data, or pass a PR file path.")
+            return
 
     await setup_cognee()
     await _ensure_graph()
 
-    print(f"\n-> detecting reversals in: {pr_path.name}")
+    print(f"\n-> detecting reversals in: {name}")
     verdict = await detect_reversal(pr_text)
 
     print("\n=== VERDICT ===")

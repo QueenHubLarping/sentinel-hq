@@ -44,15 +44,35 @@ class Verdict(BaseModel):
     )
     decision_reference: str = Field(
         default="",
-        description="The reversed decision, e.g. 'ADR-001 (async email)'. Empty if none.",
+        description="The reversed decision, PR-keyed, e.g. 'PR #42 (async email)'. Copy the "
+        "establishing PR number from the MEMORY CONTEXT (look for [pr_number: NN] or 'PR #NN'). "
+        "Empty if none.",
     )
     original_reasoning: str = Field(
         default="",
-        description="WHY the original decision was made, quoted from the memory context.",
+        description="WHY the original decision was made, quoted from the memory context "
+        "(the rationale lives in the linked incident ISSUE, not the PR diff).",
     )
     impact_if_merged: str = Field(
         default="",
         description="What regresses if this PR merges (e.g. reintroduced latency).",
+    )
+    assumption: str = Field(
+        default="",
+        description="The load-bearing ASSUMPTION the original decision rests on, quoted/"
+        "paraphrased from the context (e.g. 'synchronous email adds ~600ms, exceeding the "
+        "checkout latency budget'). Empty if the context states no assumption — never invent one.",
+    )
+    affected_capability: str = Field(
+        default="",
+        description="The cross-cutting capability this touches, ONE or two words "
+        "(e.g. 'Messaging', 'Payments', 'Rate Limiting'). Empty if unclear.",
+    )
+    evidence_chain: str = Field(
+        default="",
+        description="The reconstruction path through the graph, e.g. "
+        "'PR #42 (made it async) -> Issue #91 (the latency incident)'. Use the PR/issue "
+        "identifiers present in the context. Empty if not derivable.",
     )
     confidence: float = Field(
         default=0.0, description="Confidence 0.0-1.0 that this is a genuine reversal."
@@ -61,6 +81,11 @@ class Verdict(BaseModel):
         default=False,
         description="(system-managed — always leave false) set by Sentinel when the team "
         "previously dismissed this drift via '/sentinel noise'.",
+    )
+    provenance_tier: str = Field(
+        default="inferred",
+        description="(system-managed — always leave as the default) the trust tier of the "
+        "contradicted memory; Sentinel sets 'approved' or 'inferred' after the verdict.",
     )
 
     @property
@@ -80,11 +105,17 @@ introduces the '+' code. Do not confuse the PR's change with the existing decisi
 
 You MUST fill EVERY field, taking content only from the MEMORY CONTEXT (never invent):
 - reverses_decision: true if the PR undoes/contradicts a decision in the context; else false.
-- decision_reference: the decision's identifier from the context (e.g. "ADR-001 (async
-  email)"). If reverses_decision is true this MUST be non-empty and copied from the context.
-- original_reasoning: the WHY, quoted from the context.
+- decision_reference: the decision's identifier from the context, PR-keyed (e.g. "PR #42
+  (async email)"). Look for [pr_number: NN] or "PR #NN" in the context. If reverses_decision
+  is true this MUST be non-empty and copied from the context.
+- original_reasoning: the WHY, quoted from the context (it lives in the linked incident ISSUE).
 - impact_if_merged: concretely what regresses if merged (e.g. "reintroduces the 800ms
   blocking SMTP call in checkout, raising p95 latency"). Non-empty if reverses_decision is true.
+- assumption: the load-bearing assumption the decision rests on, IF the context states one
+  (e.g. "the provider call costs ~800ms on the critical path"); else leave empty — never invent.
+- affected_capability: one/two words for the capability (e.g. "Messaging"); empty if unclear.
+- evidence_chain: the path through the context, e.g. "PR #42 (made it async) -> Issue #91
+  (the latency incident)"; use the identifiers present; empty if not derivable.
 - confidence: a number 0.0-1.0. If reverses_decision is true, use 0.7-0.95.
 
 A PR that re-introduces something a past decision deliberately removed IS a reversal.
@@ -96,10 +127,13 @@ Think step by step: identify the decision in the context, identify what the PR c
 then check if the PR undoes the decision. If the contradicted decision is not in the
 MEMORY CONTEXT, set reverses_decision=false.
 
-Example — PR makes a queued operation synchronous; context has "ADR-007: use async X to
-cut latency". Correct output: reverses_decision=true, decision_reference="ADR-007 (async X)",
-original_reasoning="async X was adopted to remove latency from the critical path",
-impact_if_merged="reintroduces the latency ADR-007 removed", confidence=0.9.
+Example — PR makes a queued operation synchronous; context has "PR #42 (async X): moved X to
+a queue" and "Issue #91: X on the critical path cost ~800ms latency". Correct output:
+reverses_decision=true, decision_reference="PR #42 (async X)", original_reasoning="X was moved
+off the critical path to remove ~800ms of latency", impact_if_merged="reintroduces the latency
+PR #42 removed", assumption="X on the critical path costs ~800ms", evidence_chain="PR #42
+(made it async) -> Issue #91 (the latency incident)", affected_capability="Messaging",
+confidence=0.9.
 """
 
 
@@ -227,5 +261,14 @@ async def detect_reversal(
         from sentinel.improve import is_dismissed
 
         verdict.suppressed_by_feedback = await is_dismissed(verdict.decision_reference)
+
+    # Trust tier (minimal M9 / §8.1): only HUMAN-APPROVED memory drives a confident flag;
+    # machine-INFERRED memory surfaces as a soft "possible" proposal. The tier is set here,
+    # never by the LLM, from the human-approval ledger (sentinel.trust). The comment card
+    # renders confident vs. soft off this — the asymmetry rule made visible.
+    if verdict.reverses_decision and verdict.decision_reference:
+        from sentinel.trust import provenance_tier
+
+        verdict.provenance_tier = provenance_tier(verdict.decision_reference)
 
     return verdict
