@@ -41,6 +41,20 @@ _DEFAULTS = {
 for _k, _v in _DEFAULTS.items():
     os.environ.setdefault(_k, _v)
 
+# OpenAI posture: strip any LOCAL (Ollama) endpoints so cognee — which reads these at
+# IMPORT time — uses OpenAI's own endpoints. Without this, the GitHub Action's Ollama
+# defaults (localhost:11434) make cognee's LLM/embedding connection test hang for 30s on
+# a hosted runner with no Ollama. This must run before `import cognee`.
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "11434")
+if os.environ.get("LLM_PROVIDER") == "openai":
+    _ep = os.environ.get("LLM_ENDPOINT", "")
+    if not _ep or any(h in _ep for h in _LOCAL_HOSTS):
+        os.environ.pop("LLM_ENDPOINT", None)
+if os.environ.get("EMBEDDING_PROVIDER") == "openai":
+    _ee = os.environ.get("EMBEDDING_ENDPOINT", "")
+    if not _ee or any(h in _ee for h in _LOCAL_HOSTS):
+        os.environ.pop("EMBEDDING_ENDPOINT", None)
+
 # Cognee validates the LLM env at IMPORT time (cognee.shared.rate_limiting builds
 # LLMConfig on import, before setup_cognee() runs) and requires LLM_API_KEY to be
 # present and non-empty whenever LLM_MODEL/LLM_ENDPOINT are set — even for Ollama. The

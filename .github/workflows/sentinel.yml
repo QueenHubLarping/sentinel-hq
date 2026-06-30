@@ -29,6 +29,7 @@ jobs:
           # LLM: OpenAI gpt-4o-mini
           llm-provider: openai
           llm-model: gpt-4o-mini
+          llm-endpoint: ""          # OpenAI's own endpoint, not local Ollama
           llm-api-key: ${{ secrets.OPENAI_API_KEY }}
           # Embeddings: OpenAI text-embedding-3-small (no Ollama)
           embedding-provider: openai
