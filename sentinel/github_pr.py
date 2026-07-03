@@ -14,6 +14,7 @@ Resolve helpers (used by the '/sentinel intentional' issue_comment flow):
 import json
 import os
 import subprocess
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -131,6 +132,52 @@ def load_pr_text(pr_file: str | None = None) -> str:
         return f"# {title}\n\n{body}"
 
     raise SystemExit("No PR source: pass a file path or run inside a GitHub PR event.")
+
+
+RECAP_BRANCH = "sentinel-recaps"
+
+
+def publish_recap_page(html_text: str, pr_number: int) -> str:
+    """Publish the Visual Memory Recap to the `sentinel-recaps` branch and return its
+    GitHub Pages URL — the clickable LIVE link the PR comment carries.
+
+    Writes `recaps/pr-<N>.html` via the contents API (creating the branch from the
+    default branch if needed). The repo serves Pages from this branch, so the returned
+    URL renders the interactive page directly in a browser — unlike the workflow
+    artifact, which is only a downloadable zip. Callers treat any failure as
+    advisory (fall back to the artifact link).
+    """
+    import base64
+
+    repo = os.environ["GITHUB_REPOSITORY"]
+
+    try:
+        _api(f"/repos/{repo}/git/ref/heads/{RECAP_BRANCH}")
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+        default = _api(f"/repos/{repo}")["default_branch"]
+        sha = _api(f"/repos/{repo}/git/ref/heads/{default}")["object"]["sha"]
+        _api(f"/repos/{repo}/git/refs", method="POST",
+             body={"ref": f"refs/heads/{RECAP_BRANCH}", "sha": sha})
+
+    path = f"recaps/pr-{pr_number}.html"
+    body = {
+        "message": f"sentinel: visual memory recap for PR #{pr_number}",
+        "content": base64.b64encode(html_text.encode("utf-8")).decode("ascii"),
+        "branch": RECAP_BRANCH,
+    }
+    try:
+        existing = _api(f"/repos/{repo}/contents/{path}?ref={RECAP_BRANCH}")
+        if isinstance(existing, dict) and existing.get("sha"):
+            body["sha"] = existing["sha"]
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            raise
+    _api(f"/repos/{repo}/contents/{path}", method="PUT", body=body)
+
+    owner, name = repo.split("/", 1)
+    return f"https://{owner.lower()}.github.io/{name}/{path}"
 
 
 def post_comment(comment: str) -> None:

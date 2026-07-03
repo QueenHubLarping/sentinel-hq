@@ -222,8 +222,28 @@ async def main() -> int:
             if recap_html:
                 recap_path = write_recap(recap_html)
                 print(f"-> visual memory recap written: {recap_path}")
+                # Best of both: a LIVE GitHub Pages link (renders in the browser) with
+                # the workflow-artifact link as the durable fallback.
+                live_url = ""
+                try:
+                    from sentinel.github_pr import issue_number, publish_recap_page
+
+                    number = issue_number()
+                    if number and os.environ.get("GITHUB_TOKEN"):
+                        live_url = publish_recap_page(recap_html, number)
+                        print(f"-> recap published live: {live_url}")
+                except Exception as exc:  # noqa: BLE001 — advisory: Pages publish is a bonus
+                    print(f"recap live-publish skipped: {exc}")
                 run_url = _run_url()
-                if run_url:
+                if live_url:
+                    recap_note = (
+                        "\n\n<sub>📊 <b><a href=\"" + live_url + "\">Open the interactive "
+                        "Visual Memory Recap</a></b> — the diff annotated against memory, "
+                        "the belief card, and the evidence graph Sentinel traversed"
+                        + (f" (<a href=\"{run_url}\">run artifact</a>)" if run_url else "")
+                        + ".</sub>"
+                    )
+                elif run_url:
                     recap_note = (
                         "\n\n<sub>📊 <b>Visual Memory Recap</b> — an interactive, annotated "
                         f"walkthrough of this memory conflict is attached as an artifact on "
