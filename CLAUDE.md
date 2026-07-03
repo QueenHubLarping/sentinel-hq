@@ -134,6 +134,12 @@ sentinel/
   improve.py          — improve phase: session feedback (👍/👎) → cognee.improve() re-weights;
                         PR-keyed feedback_signature; durable dismissal in .sentinel/.sentinel-dismissed
   comment.py          — the Memory Review card (approved=confident CAUTION / inferred=soft NOTE)
+  recap.py            — the Visual Memory Recap: an interactive, SELF-CONTAINED HTML artifact per
+                        flagged PR (annotated diff + belief card + traversable evidence graph with a
+                        "play the traversal" SPINE-1 animation). Pure core (parse_pr/curate_subgraph/
+                        render_recap_html — deterministic layout, no CDN, unit-tested offline);
+                        recap_from_live_graph() is the thin live wrapper. The Action uploads
+                        sentinel_recap.html as a workflow artifact and the comment links the run.
   github_pr.py        — GitHub REST helpers, event payload parsing, commit/push
 
 .sentinel/              — durable, committable backstops (NOT a memory store)
@@ -148,6 +154,8 @@ scripts/
   day2_detect.py          — reversal detection on an incoming PR (slug from the snapshot); prints comment
   day3_flip.py            — full demo loop; emits graph_before.html + graph_after.html
   day4_improve.py         — improve phase: 👎 a flag → cognee.improve() → same + similar PR go silent
+  recap_demo.py           — offline preview of the Visual Memory Recap (before/after-forget toggle);
+                            no Cognee/LLM — writes recap_demo.html from the snapshot corpus
   action_entrypoint.py    — GitHub Action entry point (pull_request + issue_comment events)
   wipe.py                 — local dev: wipe Cognee stores for a clean re-ingest
 

@@ -53,6 +53,16 @@ def _theme(text: str) -> str:
         return "email"
     if "throttle" in t or "ratelimit" in t or "rate limit" in t or "rate-limit" in t:
         return "ratelimit"
+    if "session" in t or "signed token" in t or "revocation" in t:
+        return "auth"
+    if "idempotency" in t or "dedupe bookkeeping" in t or "capture" in t:
+        return "payments_capture"
+    if "pgbouncer" in t or "pooling" in t or "straight to the database" in t:
+        return "db_pooling"
+    if "search" in t or "read table" in t:
+        return "search"
+    if "webhook" in t or "callback" in t:
+        return "webhooks"
     if "postgres" in t or "mongo" in t or "sql" in t:
         return "datastore"
     return "other"

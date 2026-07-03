@@ -117,6 +117,14 @@ runs:
         SENTINEL_DOC_GLOBS: ${{ inputs.doc-globs }}
         SENTINEL_SLACK_DIR: ${{ inputs.slack-export-dir }}
       run: python "${{ github.action_path }}/scripts/action_entrypoint.py"
+    # The Visual Memory Recap — an interactive, self-contained HTML walkthrough of the
+    # memory conflict (annotated diff + belief card + traversable evidence graph). Only
+    # written when a PR is flagged; skipped silently otherwise.
+    - uses: actions/upload-artifact@v4
+      with:
+        name: sentinel-visual-memory-recap
+        path: sentinel_recap.html
+        if-no-files-found: ignore
 
 # NOTE: detection uses local Ollama for BOTH reasoning (qwen2.5:3b) and embeddings
 # (nomic-embed-text) by default. Use a self-hosted runner with `ollama serve` and both

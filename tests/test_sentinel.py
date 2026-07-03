@@ -545,3 +545,165 @@ def test_gather_memory_reads_snapshot(tmp_path, monkeypatch):
     assert incoming_text("sync_email") == "make email synchronous"
     assert incoming_text(57) == "make email synchronous"
     assert incoming_text("missing") == ""
+
+
+# ===========================================================================
+# Visual Memory Recap — the interactive HTML artifact (sentinel.recap)
+# ===========================================================================
+from sentinel.recap import (  # noqa: E402
+    curate_subgraph,
+    parse_pr,
+    render_recap_html,
+    traversal_path,
+)
+
+_PR_TEXT = """# PR #57: Simplify checkout — send confirmation email synchronously
+
+**Author:** @new-contributor
+**Branch:** simplify-email → main
+
+## Description
+
+Simplifies email: sends inline, no queue.
+
+## Diff
+
+```diff
+--- a/checkout/views.py
++++ b/checkout/views.py
+@@ def checkout(request):
+         order = create_order(request.user, request.cart)
+-        send_order_confirmation_task.delay(order.id)
++        send_email_smtp(order.user.email, render_confirmation(order))
+```
+"""
+
+_RECAP_NBID = {
+    "dec": {"name": "PR #42 (async email)", "type": "Entity"},
+    "i91": {"name": "Issue #91 black friday incident", "type": "Entity"},
+    "eml": {"name": "email service", "type": "Entity"},
+    "person": {"name": "priya sharma", "type": "Entity"},
+    "d": {"name": "2024-08-14", "type": "Entity"},
+}
+_RECAP_EDGES = [
+    {"src": "dec", "dst": "i91", "rel": "justified_by"},
+    {"src": "dec", "dst": "eml", "rel": "pertains_to"},
+    {"src": "dec", "dst": "person", "rel": "authored_by"},
+    {"src": "dec", "dst": "d", "rel": "accepted_on"},   # date — pruned
+    {"src": "dec", "dst": "dec", "rel": "self"},        # self-loop — ignored
+]
+
+
+def _recap_verdict(**over):
+    base = dict(
+        analysis="Removes async dispatch, adds inline SMTP.",
+        reverses_decision=True,
+        decision_reference="PR #42 (async email)",
+        original_reasoning="Async email cut ~800ms of checkout latency after Black Friday.",
+        impact_if_merged="Reintroduces the 800ms blocking SMTP call.",
+        assumption="the SMTP call costs ~800ms on the critical path",
+        affected_capability="Messaging",
+        evidence_chain="PR #42 (made it async) -> Issue #91 (the latency incident)",
+        confidence=0.92,
+        provenance_tier="approved",
+    )
+    base.update(over)
+    return Verdict(**base)
+
+
+# --- parse_pr: title / meta / diff extraction ---
+
+def test_parse_pr_extracts_title_meta_and_diff():
+    p = parse_pr(_PR_TEXT)
+    assert p["title"].startswith("PR #57")
+    assert any("new-contributor" in m for m in p["meta"])
+    kinds = [k for k, _ in p["diff"]]
+    assert "file" in kinds and "hunk" in kinds and "del" in kinds and "add" in kinds
+
+
+def test_parse_pr_no_diff_block_is_graceful():
+    p = parse_pr("# PR #9: docs tweak\n\nJust prose, no diff.")
+    assert p["title"] == "PR #9: docs tweak"
+    assert p["diff"] == []
+
+
+# --- curate_subgraph: PR-keyed root resolution + pruning ---
+
+def test_curate_subgraph_resolves_pr_keyed_root():
+    nodes, edges = curate_subgraph(_RECAP_NBID, _RECAP_EDGES, "PR #42 (async email)")
+    roles = {n["id"]: n["role"] for n in nodes}
+    assert roles["dec"] == "decision"
+    assert roles["i91"] == "issue"
+    ids = {n["id"] for n in nodes}
+    assert "d" not in ids                      # date pruned
+    rels = {e["rel"] for e in edges}
+    assert "justified by" in rels              # underscore -> space
+
+
+def test_curate_subgraph_empty_when_root_missing():
+    assert curate_subgraph(_RECAP_NBID, _RECAP_EDGES, "PR #999 (missing)") == ([], [])
+
+
+def test_curate_subgraph_resolves_root_by_topic_in_parens():
+    nbid = {"n1": {"name": "decision: async email via celery", "type": "Entity"}}
+    nodes, _ = curate_subgraph(nbid, [], "PR #7 (async email)")
+    assert nodes and nodes[0]["role"] == "decision"
+
+
+# --- traversal_path: the SPINE-1 animation order ---
+
+def test_traversal_path_incoming_decision_issue():
+    nodes = [
+        {"id": "inc", "label": "PR #57", "role": "incoming"},
+        {"id": "dec", "label": "Decision", "role": "decision"},
+        {"id": "i91", "label": "Issue #91", "role": "issue"},
+    ]
+    edges = [
+        {"src": "inc", "dst": "dec", "rel": "reverses"},
+        {"src": "dec", "dst": "i91", "rel": "justified by"},
+    ]
+    assert traversal_path(nodes, edges) == ["inc", "dec", "i91"]
+
+
+# --- render_recap_html: the self-contained artifact ---
+
+def test_render_recap_contains_diff_belief_and_graph():
+    v = _recap_verdict()
+    nodes, edges = curate_subgraph(_RECAP_NBID, _RECAP_EDGES, v.decision_reference)
+    html_out = render_recap_html(v, _PR_TEXT, [("Current memory", nodes, edges)])
+    assert html_out.startswith("<!DOCTYPE html>")
+    assert "Visual Memory Recap" in html_out
+    assert "send_order_confirmation_task.delay" in html_out          # the diff
+    assert "Memory conflict" in html_out                              # the annotation
+    assert "~800ms of checkout latency" in html_out                   # the belief
+    assert "92%" in html_out                                          # confidence
+    assert "Messaging" in html_out                                    # capability chip
+    assert "<svg" in html_out and "Play the traversal" in html_out    # interactive graph
+    assert "http" not in html_out.split("</style>")[0]                # no CDN in the CSS
+
+
+def test_render_recap_escapes_untrusted_text():
+    v = _recap_verdict(original_reasoning='<script>alert("x")</script>')
+    html_out = render_recap_html(v, _PR_TEXT, [])
+    assert "<script>alert" not in html_out
+    assert "&lt;script&gt;" in html_out
+
+
+def test_render_recap_without_graph_still_renders_page():
+    v = _recap_verdict(assumption="", evidence_chain="")
+    html_out = render_recap_html(v, _PR_TEXT, [])
+    assert "Visual Memory Recap" in html_out
+    assert "Play the traversal" not in html_out       # graph section omitted
+    assert "supersede" in html_out                     # belief card still there
+
+
+def test_render_recap_two_states_renders_toggle():
+    v = _recap_verdict()
+    nodes, edges = curate_subgraph(_RECAP_NBID, _RECAP_EDGES, v.decision_reference)
+    after = [dict(n, role="retired") if n["role"] == "decision" else n for n in nodes]
+    html_out = render_recap_html(
+        v, _PR_TEXT, [("Before forget", nodes, edges), ("After forget", after, edges)]
+    )
+    assert "Before forget" in html_out and "After forget" in html_out
+    assert 'showState(1)' in html_out                  # the toggle buttons exist
+    assert html_out.count('class="gstate"') == 2

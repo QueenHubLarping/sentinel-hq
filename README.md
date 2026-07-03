@@ -14,6 +14,7 @@ Codebases remember *what* changed, never *why*. Months later someone opens a PR 
 2. **recall** — on each PR, multi-hop traverse the graph to find any decision the change contradicts, *and its rationale*.
 3. **comment** — if it reverses a past decision, Sentinel comments with the reasoning trail and asks "intentional?"
 4. **forget** — when the team confirms an intentional override, the old decision is retired (so the bot stops crying wolf).
+5. **show** — every flag also ships a **Visual Memory Recap**: an interactive, self-contained HTML artifact with the diff annotated against memory, the belief card, and the evidence graph Sentinel traversed — including a "play the traversal" animation that walks the multi-hop recall (incoming PR → decision → incident issue) on screen.
 5. **improve** — a maintainer's 👍/👎 on a flag is stored as session feedback and fed to `cognee.improve()`, which gently nudges the `feedback_weight` on the exact graph nodes that flag used (a 👎 down, a 👍 up); the next feedback-influenced recall ranks that evidence accordingly, re-shaping the retrieved answer. Unlike forget, nothing is deleted — the decision stays in memory; improve just refines the ranking.
 
 ## Groq reasoning + local memory
@@ -56,6 +57,9 @@ python scripts/day3_flip.py
 
 # 6. Run the improve demo (👎 a flag → cognee.improve() → similar PR no longer flagged)
 python scripts/day4_improve.py
+
+# 7. Preview the Visual Memory Recap artifact (offline, no Cognee/LLM needed)
+python scripts/recap_demo.py   # writes recap_demo.html — open it in a browser
 ```
 
 ## Status

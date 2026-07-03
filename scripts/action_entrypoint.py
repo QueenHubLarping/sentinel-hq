@@ -51,6 +51,14 @@ async def _node_count() -> int:
     return len(nodes)
 
 
+def _run_url() -> str:
+    """URL of the current workflow run (where the recap artifact lands), or "" locally."""
+    server = os.environ.get("GITHUB_SERVER_URL", "")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    return f"{server}/{repo}/actions/runs/{run_id}" if server and repo and run_id else ""
+
+
 def _write_summary(comment: str) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
@@ -200,7 +208,31 @@ async def main() -> int:
         except Exception as exc:  # noqa: BLE001 — advisory: the diagram is a bonus, not required
             print(f"graph diagram skipped: {exc}")
 
-    comment = render_comment(verdict, graph_section)
+    # Best-effort: render the interactive Visual Memory Recap (annotated diff + belief
+    # card + the traversable evidence graph) as a self-contained HTML artifact. The
+    # workflow's upload-artifact step publishes it; the comment links the run. Never blocks.
+    recap_note = ""
+    if verdict.should_flag:
+        try:
+            from sentinel.recap import recap_from_live_graph, write_recap
+
+            recap_html = await recap_from_live_graph(
+                verdict, pr_text, repo=os.environ.get("GITHUB_REPOSITORY", "")
+            )
+            if recap_html:
+                recap_path = write_recap(recap_html)
+                print(f"-> visual memory recap written: {recap_path}")
+                run_url = _run_url()
+                if run_url:
+                    recap_note = (
+                        "\n\n<sub>📊 <b>Visual Memory Recap</b> — an interactive, annotated "
+                        f"walkthrough of this memory conflict is attached as an artifact on "
+                        f"<a href=\"{run_url}\">this workflow run</a>.</sub>"
+                    )
+        except Exception as exc:  # noqa: BLE001 — advisory: the recap is a bonus, not required
+            print(f"visual recap skipped: {exc}")
+
+    comment = render_comment(verdict, graph_section) + recap_note
 
     print("\n" + comment + "\n")
     _write_summary(comment)

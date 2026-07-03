@@ -23,6 +23,10 @@ Thumbs.db
 .env.*
 !.env.template
 
+# Generated Visual Memory Recap artifacts (recap_demo.html is tracked as the demo asset)
+sentinel_recap.html
+recap_live.html
+
 # Cognee local data stores (self-hosted graph + vector + relational)
 .data_storage/
 .cognee_cache/
