@@ -33,6 +33,46 @@ Codebases remember *what* changed, never *why*. `git blame` gives you an author 
 
 **The one-sentence test:** remove Cognee and Sentinel breaks — a learning is a relationship between distant, differently-worded events (an incident, a decision, an outcome) that share no words and no links; only typed graph traversal + semantic recall together can reconstruct it.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph GitHub["GitHub (any repo)"]
+    PRs["merged PRs + linked issues<br/>(the real history)"]
+    PR["incoming PR"]
+    C["Memory Review comment<br/>+ live Visual Recap link"]
+    CMD["/sentinel intentional · /sentinel noise"]
+  end
+  subgraph Sentinel["Sentinel (GitHub Action)"]
+    ING["ingest — remember"]
+    DET["detect — recall + judge"]
+    RES["resolve — forget"]
+    IMP["improve — 👎 feedback"]
+  end
+  subgraph Cognee["Self-hosted Cognee 1.2.2"]
+    G[("knowledge graph<br/>Ladybug")]
+    V[("vector store<br/>LanceDB")]
+  end
+  PRs -->|"add() + cognify()"| ING --> G & V
+  PR --> DET
+  G & V -->|"search(GRAPH_COMPLETION)"| DET --> C
+  CMD --> RES -->|"forget(data_id)"| G
+  CMD --> IMP -->|"session.add_feedback() + improve()"| G
+  style G fill:#7c3aed,color:#fff
+  style V fill:#2563eb,color:#fff
+```
+
+## How Cognee is used — API by API (for judges grepping for depth)
+
+| Cognee API | Where | Why it's load-bearing |
+|---|---|---|
+| `cognee.add(DataItem(data_id=uuid5(...)))` + `cognee.cognify()` | [`sentinel/ingest.py`](sentinel/ingest.py) | **Stable, deterministic data_ids** per PR/issue doc — what makes *selective forget* possible across ephemeral CI runners. `cognify` extracts the typed cross-document edges the multi-hop catch depends on. |
+| `cognee.search(query_type=GRAPH_COMPLETION)` (+ `only_context=True`) | [`sentinel/detect.py`](sentinel/detect.py) | The hybrid recall: vector match finds the semantic neighborhood, graph traversal reaches the rationale **across documents that share no words and no links**. The raw-context probe is the honest before/after measure for the forget flip. |
+| `cognee.search(session_id=…, feedback_influence>0, top_k=…)` | [`sentinel/detect.py`](sentinel/detect.py) | Detection runs inside a Cognee **session** so the exact `used_graph_element_ids` behind a flag are recorded — feedback lands on the evidence that produced it. |
+| `cognee.forget(data_id=…, dataset=…)` | [`sentinel/resolve.py`](sentinel/resolve.py) | `/sentinel intentional` retires the establishing-PR doc **and its rationale issue** from active memory (history stays on GitHub). The same PR re-runs silent — a real graph mutation, visible as a behavior flip. |
+| `cognee.session.add_feedback(score=…)` → `cognee.improve(feedback_alpha=0.3)` | [`sentinel/improve.py`](sentinel/improve.py) | A maintainer 👎 nudges `feedback_weight` on the flag's own graph elements (gentle re-rank, not an erase) — Cognee's critic-guided reweighting used exactly as designed. |
+| Trust tiers via feedback weights | [`sentinel/trust.py`](sentinel/trust.py) | Human-approved beliefs drive confident flags; machine-inferred ones only *propose* — approval is the strongest positive feedback signal. |
+
 ## Run it on your repo
 
 ```yaml

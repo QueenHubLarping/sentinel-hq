@@ -1,16 +1,23 @@
-# Sentinel — 4:30 demo script
+# Sentinel — demo script (wow first, ≤3:00 tight cut · 4:30 full cut)
 
 > Every beat below is **live on the public repo** — nothing needs to be run on stage.
 > Backup plan: the same story told by scrolling the PR comment history (it's all there, timestamped).
 > One-link version for judges: **https://queenhublarping.github.io/sentinel-test-repo/**
 
-## 0:00 — The hook (30s)
+## 0:00 — OPEN ON THE WOW (30s) — screen starts on PR #22's Memory Review comment
 
-> "Codebases remember *what* changed — never *why*. `git blame` gives you an author and a line,
-> never the incident behind the decision. So months later, someone opens a PR to 'simplify'
-> something… and undoes a decision the team paid for in production. Every team has this scar.
-> Sentinel is the institutional memory that catches it — built on Cognee's full memory
-> lifecycle: remember, recall, improve, forget."
+> (no preamble — the card is already on screen)
+>
+> "This PR 'simplifies checkout'. Every review bot approves it. This comment is our bot
+> catching that it silently **reverses a decision the team paid for on Black Friday** —
+> and reconstructing the why: sync email cost ~800ms of checkout latency and real revenue.
+> Here's the kicker: this PR shares **no keywords** with that incident and **links to
+> nothing**. Keyword search can't find it. The GitHub API can't follow a link nobody wrote.
+> Only Cognee's graph-plus-vector memory reconstructs the chain. That's Sentinel —
+> institutional memory for your codebase. Let me show you the whole lifecycle."
+
+*(For the 3:00 cut: keep beats 0:00 → RECALL-recap → FORGET → close; compress REMEMBER
+into one sentence over the issues page and cut IMPROVE to one line.)*
 
 ## 0:30 — REMEMBER (45s)
 
