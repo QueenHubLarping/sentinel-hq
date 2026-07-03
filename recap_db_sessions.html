@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel · Visual Memory Recap</title>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
+        --purple:#a78bfa; --purple-deep:#7c3aed; --red:#f85149; --green:#3fb950;
+        --amber:#d29922; --blue:#58a6ff; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--fg);
+       font:15px/1.55 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; padding:28px 20px 60px; }
+.wrap { max-width:1180px; margin:0 auto; }
+.topbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.topbar h1 { font-size:21px; font-weight:700; }
+.chip { display:inline-block; padding:3px 11px; border-radius:999px; font-size:12px;
+        font-weight:600; border:1px solid var(--border); background:var(--panel); }
+.chip.purple { background:#3b2a63; border-color:var(--purple-deep); color:var(--purple); }
+.chip.red    { background:#4d1a1f; border-color:#8e2c33; color:#ff9b9b; }
+.chip.gray   { color:var(--muted); }
+.hero { background:linear-gradient(135deg,#221a3a,#161b22 60%); border:1px solid var(--purple-deep);
+        border-radius:12px; padding:20px 24px; margin-bottom:20px; }
+.hero .big { font-size:18px; font-weight:650; margin-bottom:8px; }
+.hero .big b { color:var(--purple); }
+.meter { display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px; color:var(--muted); }
+.meter .track { flex:0 0 220px; height:8px; border-radius:6px; background:#21262d; overflow:hidden; }
+.meter .fill { height:100%; background:linear-gradient(90deg,var(--purple-deep),var(--purple)); }
+.grid { display:grid; grid-template-columns:1.25fr 1fr; gap:18px; margin-bottom:20px; }
+@media (max-width:900px){ .grid { grid-template-columns:1fr; } }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.panel > h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+              padding:12px 16px; border-bottom:1px solid var(--border); }
+.panel .pad { padding:14px 16px; }
+.diff { font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-x:auto; }
+.diff .ln { display:block; white-space:pre; padding:0 14px; }
+.diff .file { background:#1c2128; color:var(--blue); font-weight:600; padding-top:4px; padding-bottom:4px; }
+.diff .hunk { color:var(--purple); background:#1a1f27; }
+.diff .del  { background:rgba(248,81,73,.14); color:#ffa198; }
+.diff .add  { background:rgba(63,185,80,.13); color:#7ee787; }
+.diff .ctx  { color:var(--muted); }
+.annot { margin:8px 12px; padding:10px 14px; border-left:3px solid var(--red);
+         background:rgba(248,81,73,.08); border-radius:0 8px 8px 0; font-size:13px; }
+.annot b { color:#ff9b9b; }
+.belief-quote { border-left:3px solid var(--purple-deep); padding:8px 14px; margin:6px 0 12px;
+                background:rgba(124,58,237,.08); border-radius:0 8px 8px 0; font-style:italic; }
+.kv { font-size:13.5px; margin:9px 0; }
+.kv .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; display:block; }
+.chain { font:12.5px ui-monospace,Menlo,monospace; color:var(--blue); }
+.note { color:var(--muted); font-size:12px; font-style:italic; }
+.graph-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+              padding:12px 16px; border-bottom:1px solid var(--border); }
+.graph-head h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); flex:1; }
+button { background:var(--purple-deep); color:#fff; border:0; border-radius:8px; padding:7px 14px;
+         font-size:13px; font-weight:600; cursor:pointer; }
+button:hover { background:#8b5cf6; }
+button.ghost { background:transparent; border:1px solid var(--border); color:var(--muted); }
+button.ghost.active { border-color:var(--purple-deep); color:var(--purple); }
+svg text { font:12px -apple-system,"Segoe UI",sans-serif; fill:var(--fg); }
+.edge { stroke:#3d444d; stroke-width:1.6; fill:none; marker-end:url(#arr); transition:all .25s; }
+.edge-label { fill:var(--muted); font-size:10.5px; }
+.node circle { stroke-width:2; transition:all .25s; cursor:default; }
+.node text { font-weight:600; }
+.node .sub { font-weight:400; fill:var(--muted); font-size:10px; }
+.lit circle { filter:drop-shadow(0 0 10px var(--purple)); stroke:#fff !important; }
+.lit-edge { stroke:var(--purple) !important; stroke-width:3 !important; }
+.dim { opacity:.25; }
+.retired circle { stroke-dasharray:4 3; }
+.retired text { text-decoration:line-through; fill:var(--muted); }
+.legend { display:flex; gap:14px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--border);
+          font-size:12px; color:var(--muted); }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+.caption { min-height:22px; padding:6px 16px 12px; font-size:13px; color:var(--purple); }
+details { margin:18px 0; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+details summary { padding:12px 16px; cursor:pointer; font-weight:600; font-size:14px; }
+details .pad { border-top:1px solid var(--border); color:var(--muted); }
+footer { margin-top:26px; text-align:center; color:var(--muted); font-size:12.5px; }
+footer b { color:var(--purple); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>🛡️ Sentinel · Visual Memory Recap</h1>
+    <span class="chip purple">Authentication</span>
+    <span class="chip red">supersedes a learning</span>
+    <span class="chip">human-approved belief</span>
+    
+    
+  </div>
+
+  <div class="hero">
+    <div class="big">This PR doesn't just change code — it changes <b>what your organization
+    believes about Authentication</b>.</div>
+    <div>PR #83: Persist user sessions in the database for instant revocation</div>
+    <div class="note">Author: @new-contributor · Branch: db-backed-sessions → main</div>
+    <div class="meter"><span>Confidence in the current belief</span>
+      <span class="track"><span class="fill" style="width:90%"></span></span>
+      <b style="color:var(--fg)">90%</b></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>What this PR changes — annotated against memory</h2>
+      <div class="diff">
+<span class="ln file">--- a/config/settings.py</span>
+<span class="ln file">+++ b/config/settings.py</span>
+<span class="ln hunk">@@</span>
+<div class="annot">⛔ <b>Memory conflict:</b> the removed lines undo <b>PR #17</b> — <i>request authentication must be verifiable **without touching the database**: a signed, self-contained credential...</i></div>
+<span class="ln add">+SESSION_ENGINE = &quot;django.contrib.sessions.backends.db&quot;</span>
+<span class="ln add">+MIDDLEWARE.insert(0, &quot;django.contrib.sessions.middleware.SessionMiddleware&quot;)</span>
+<span class="ln ctx"> </span>
+<span class="ln file">--- a/auth/middleware.py</span>
+<span class="ln file">+++ b/auth/middleware.py</span>
+<span class="ln hunk">@@ def authenticate(request):</span>
+<span class="ln del">-    claims = verify_token_signature(request.headers[&quot;Authorization&quot;])</span>
+<span class="ln del">-    request.user = User.from_claims(claims)</span>
+<span class="ln add">+    # look the session up so admins can revoke it row-by-row</span>
+<span class="ln add">+    session = Session.objects.get(session_key=request.COOKIES[&quot;sessionid&quot;])</span>
+<span class="ln add">+    request.user = session.user</span>
+</div>
+      <div class="pad note">Support keeps asking for a &quot;log this user out everywhere&quot; button. The cleanest way is classic server-side sessions: keep a row per session so an admin can delete it and the user is out immediately. This PR switches auth back to Django&#x27;s DB session backend and looks the session up on each request — standard, boring, battle-tested.</div>
+    </div>
+    <div class="panel">
+      <h2>What your organization currently believes</h2>
+      <div class="pad">
+        <div class="belief-quote">request authentication must be verifiable **without touching the database**: a signed, self-contained credential...</div>
+        <div class="kv"><span class="k">This holds only while</span>per-request session-state reads compete with revenue queries for the primary; holds while auth state lives in the request-serving database</div>
+        <div class="kv"><span class="k">Reconstructed via</span>
+          <span class="chain">PR #17 (moved to stateless tokens) -&gt; Issue #9 (the flash-sale incident)</span></div>
+        <div class="kv"><span class="k">Memory impact</span>
+          ⚠️ This PR would <b>supersede</b> PR #17.</div>
+        <div class="kv"><span class="k">If merged</span>reintroduces per-request session-state reads that previously caused significant authentication latency and stalled worker processes</div>
+        <p class="note">no shared keywords, no #ref from this PR — recovered by graph + semantic reasoning</p>
+      </div>
+    </div>
+  </div>
+
+  
+<div class="panel" style="margin-bottom:20px">
+  <div class="graph-head">
+    <h2>The evidence graph Sentinel traversed</h2>
+    
+    <button onclick="playTraversal(0)">▶ Play the traversal</button>
+  </div>
+  <svg viewBox="0 0 920 540" width="100%">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="26" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#3d444d"/></marker></defs>
+    <g class="gstate" data-state="0" style="">
+<path id="st0-e-__incoming__-00da03a3-c113-5141-9630-66a55546fded" class="edge" data-src="__incoming__" data-dst="00da03a3-c113-5141-9630-66a55546fded" d="M120,270 Q317,256 515,270"/><text class="edge-label" x="317" y="252" text-anchor="middle">reverses</text>
+<path id="st0-e-c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9-00da03a3-c113-5141-9630-66a55546fded" class="edge" data-src="c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" data-dst="00da03a3-c113-5141-9630-66a55546fded" d="M403,110 Q459,176 515,270"/><text class="edge-label" x="459" y="172" text-anchor="middle">resolved by</text>
+<path id="st0-e-55d2cd50-823c-5358-a1c7-cb91c35e1650-c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" class="edge" data-src="55d2cd50-823c-5358-a1c7-cb91c35e1650" data-dst="c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" d="M518,75 Q460,79 403,110"/><text class="edge-label" x="460" y="75" text-anchor="middle">created by</text>
+<path id="st0-e-55d2cd50-823c-5358-a1c7-cb91c35e1650-f86d1ae3-e086-50f1-aea9-95f986d5f13f" class="edge" data-src="55d2cd50-823c-5358-a1c7-cb91c35e1650" data-dst="f86d1ae3-e086-50f1-aea9-95f986d5f13f" d="M518,75 Q574,237 631,427"/><text class="edge-label" x="574" y="233" text-anchor="middle">authored</text>
+<path id="st0-e-c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9-fbcdff5b-81e5-5842-8253-715180ac15a6" class="edge" data-src="c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" data-dst="fbcdff5b-81e5-5842-8253-715180ac15a6" d="M403,110 Q517,98 631,113"/><text class="edge-label" x="517" y="94" text-anchor="middle">caused by</text>
+<path id="st0-e-c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9-e3ebf18f-79b2-5a50-ad64-bfcf9a86d963" class="edge" data-src="c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" data-dst="e3ebf18f-79b2-5a50-ad64-bfcf9a86d963" d="M403,110 Q552,146 701,210"/><text class="edge-label" x="552" y="142" text-anchor="middle">related to</text>
+<path id="st0-e-c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9-6349f96a-7c43-586d-8372-72edac1f574f" class="edge" data-src="c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" data-dst="6349f96a-7c43-586d-8372-72edac1f574f" d="M403,110 Q552,206 701,330"/><text class="edge-label" x="552" y="202" text-anchor="middle">occurred during</text>
+<path id="st0-e-f86d1ae3-e086-50f1-aea9-95f986d5f13f-24c01152-53b0-536f-b182-76cd6ddc95be" class="edge" data-src="f86d1ae3-e086-50f1-aea9-95f986d5f13f" data-dst="24c01152-53b0-536f-b182-76cd6ddc95be" d="M631,427 Q574,432 518,465"/><text class="edge-label" x="574" y="428" text-anchor="middle">modifies</text>
+<path id="st0-e-f86d1ae3-e086-50f1-aea9-95f986d5f13f-2850d116-1fec-5ce7-8a7c-50e044f4fea6" class="edge" data-src="f86d1ae3-e086-50f1-aea9-95f986d5f13f" data-dst="2850d116-1fec-5ce7-8a7c-50e044f4fea6" d="M631,427 Q517,414 403,430"/><text class="edge-label" x="517" y="410" text-anchor="middle">modifies</text>
+<path id="st0-e-f86d1ae3-e086-50f1-aea9-95f986d5f13f-e3ebf18f-79b2-5a50-ad64-bfcf9a86d963" class="edge" data-src="f86d1ae3-e086-50f1-aea9-95f986d5f13f" data-dst="e3ebf18f-79b2-5a50-ad64-bfcf9a86d963" d="M631,427 Q666,305 701,210"/><text class="edge-label" x="666" y="301" text-anchor="middle">affects</text>
+<g id="st0-__incoming__" class="node" data-state="0" data-nid="__incoming__"><circle cx="120" cy="270" r="30" fill="#dc2626" stroke="#dc2626" fill-opacity="0.22"/><text x="120" y="232" text-anchor="middle">🔻 PR #83: Persist user sessions in t</text><text class="sub" x="120" y="314" text-anchor="middle">incoming</text></g>
+<g id="st0-00da03a3-c113-5141-9630-66a55546fded" class="node" data-state="0" data-nid="00da03a3-c113-5141-9630-66a55546fded"><circle cx="515" cy="270" r="30" fill="#7c3aed" stroke="#7c3aed" fill-opacity="0.22"/><text x="515" y="232" text-anchor="middle">🛡️ PR #17</text><text class="sub" x="515" y="314" text-anchor="middle">decision</text></g>
+<g id="st0-c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9" class="node" data-state="0" data-nid="c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9"><circle cx="403" cy="110" r="22" fill="#16a34a" stroke="#16a34a" fill-opacity="0.22"/><text x="403" y="80" text-anchor="middle">🐛 Issue #9: Login Path Saturated The</text><text class="sub" x="403" y="146" text-anchor="middle">issue</text></g>
+<g id="st0-55d2cd50-823c-5358-a1c7-cb91c35e1650" class="node" data-state="0" data-nid="55d2cd50-823c-5358-a1c7-cb91c35e1650"><circle cx="518" cy="75" r="22" fill="#f59e0b" stroke="#f59e0b" fill-opacity="0.22"/><text x="518" y="45" text-anchor="middle">👤 Notchayan</text><text class="sub" x="518" y="111" text-anchor="middle">person</text></g>
+<g id="st0-fbcdff5b-81e5-5842-8253-715180ac15a6" class="node" data-state="0" data-nid="fbcdff5b-81e5-5842-8253-715180ac15a6"><circle cx="631" cy="113" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="631" y="83" text-anchor="middle">⚙️ Django_session Table</text><text class="sub" x="631" y="149" text-anchor="middle">tech</text></g>
+<g id="st0-e3ebf18f-79b2-5a50-ad64-bfcf9a86d963" class="node" data-state="0" data-nid="e3ebf18f-79b2-5a50-ad64-bfcf9a86d963"><circle cx="701" cy="210" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="701" y="180" text-anchor="middle">⚙️ Auth_service</text><text class="sub" x="701" y="246" text-anchor="middle">tech</text></g>
+<g id="st0-6349f96a-7c43-586d-8372-72edac1f574f" class="node" data-state="0" data-nid="6349f96a-7c43-586d-8372-72edac1f574f"><circle cx="701" cy="330" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="701" y="300" text-anchor="middle">⚙️ Flash-sale</text><text class="sub" x="701" y="366" text-anchor="middle">tech</text></g>
+<g id="st0-f86d1ae3-e086-50f1-aea9-95f986d5f13f" class="node" data-state="0" data-nid="f86d1ae3-e086-50f1-aea9-95f986d5f13f"><circle cx="631" cy="427" r="22" fill="#2563eb" stroke="#2563eb" fill-opacity="0.22"/><text x="631" y="397" text-anchor="middle">🔀 Pr_17</text><text class="sub" x="631" y="463" text-anchor="middle">pr</text></g>
+<g id="st0-24c01152-53b0-536f-b182-76cd6ddc95be" class="node" data-state="0" data-nid="24c01152-53b0-536f-b182-76cd6ddc95be"><circle cx="518" cy="465" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="518" y="435" text-anchor="middle">⚙️ Auth/tokens.py</text><text class="sub" x="518" y="501" text-anchor="middle">tech</text></g>
+<g id="st0-2850d116-1fec-5ce7-8a7c-50e044f4fea6" class="node" data-state="0" data-nid="2850d116-1fec-5ce7-8a7c-50e044f4fea6"><circle cx="403" cy="430" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="403" y="400" text-anchor="middle">⚙️ Auth/middleware.py</text><text class="sub" x="403" y="466" text-anchor="middle">tech</text></g>
+</g>
+  </svg>
+  <div class="caption" id="cap-0"></div>
+  <div class="legend"><span><i style="background:#7c3aed"></i>decision</span><span><i style="background:#dc2626"></i>incoming</span><span><i style="background:#2563eb"></i>pr</span><span><i style="background:#16a34a"></i>issue</span><span><i style="background:#0891b2"></i>tech</span><span><i style="background:#f59e0b"></i>person</span><span><i style="background:#6e7781"></i>retired</span></div>
+</div>
+<p class="note" style="margin:-8px 4px 20px">The reconstruction path — <b>incoming PR → governing
+decision → incident issue</b> — shares no keywords and no <code>#ref</code> across the hop:
+vector similarity alone and the GitHub API alone both miss it. Typed graph traversal + semantic
+recall (Cognee) is what connects them.</p>
+
+
+  <details><summary>🔎 How Sentinel reconstructed this</summary>
+  <div class="pad">removes stateless signed token authentication, adds stateful session lookups in the database</div></details>
+
+  <footer>🛡️ <b>Sentinel</b> — every element on this page is <b>retrieved memory</b>
+  (Cognee graph + vector recall), not a re-reading of the diff · remember / recall / improve / forget</footer>
+</div>
+<script>
+const RECAP = {"states": [{"path": ["__incoming__", "00da03a3-c113-5141-9630-66a55546fded", "c47c3b9c-9462-5dc5-a4cf-1635ad4bc6f9"], "captions": ["1 \u00b7 The incoming change: PR #83: Persist user sessions in t", "2 \u00b7 Semantic recall matches the governing decision: PR #17", "3 \u00b7 A typed graph edge reaches the rationale: Issue #9: Login Path Saturated The \u2014 no shared words, no #ref"]}],
+  "doneCaption": "The lesson, reconstructed — only graph + semantic memory could make this hop."};
+
+function playTraversal(stateIdx){
+  const data = RECAP.states[stateIdx];
+  const steps = data.path;
+  document.querySelectorAll('.lit').forEach(e=>e.classList.remove('lit'));
+  document.querySelectorAll('.lit-edge').forEach(e=>e.classList.remove('lit-edge'));
+  const cap = document.getElementById('cap-'+stateIdx);
+  let i = 0;
+  function step(){
+    if(i >= steps.length){ cap.textContent = RECAP.doneCaption; return; }
+    const nid = steps[i];
+    const el = document.getElementById('st'+stateIdx+'-'+nid);
+    if(el){ el.classList.add('lit'); }
+    if(i > 0){
+      const eid = document.getElementById('st'+stateIdx+'-e-'+steps[i-1]+'-'+nid) ||
+                  document.getElementById('st'+stateIdx+'-e-'+nid+'-'+steps[i-1]);
+      if(eid){ eid.classList.add('lit-edge'); }
+    }
+    cap.textContent = data.captions[i] || '';
+    i++; setTimeout(step, 950);
+  }
+  step();
+}
+function showState(idx){
+  document.querySelectorAll('.gstate').forEach((g,k)=>{ g.style.display = (k===idx)?'':'none'; });
+  document.querySelectorAll('.stbtn').forEach((b,k)=>{ b.classList.toggle('active', k===idx); });
+}
+document.querySelectorAll('.node').forEach(n=>{
+  n.addEventListener('mouseenter', ()=>{
+    const sid = n.dataset.state, nid = n.dataset.nid;
+    document.querySelectorAll('.gstate[data-state="'+sid+'"] .edge').forEach(e=>{
+      if(e.dataset.src!==nid && e.dataset.dst!==nid){ e.classList.add('dim'); }
+    });
+  });
+  n.addEventListener('mouseleave', ()=>{
+    document.querySelectorAll('.dim').forEach(e=>e.classList.remove('dim'));
+  });
+});
+
+</script>
+</body>
+</html>

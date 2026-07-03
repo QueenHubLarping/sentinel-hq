@@ -66,6 +66,17 @@ def issue_number() -> int | None:
     return None
 
 
+def repo_default_branch() -> str:
+    """The repo's default branch (where Sentinel's durable memory ledgers live).
+
+    Ledgers committed to a PR branch only reach that PR's own merge ref; on the
+    default branch they reach EVERY subsequent run — which is what makes a forget
+    or a dismissal durable across ephemeral runners that rebuild the graph each time.
+    """
+    repo = os.environ["GITHUB_REPOSITORY"]
+    return _api(f"/repos/{repo}")["default_branch"]
+
+
 def pr_head_branch(number: int) -> str:
     """The PR's source (head) branch name — where the supersession is committed."""
     repo = os.environ["GITHUB_REPOSITORY"]

@@ -733,3 +733,15 @@ def test_find_root_token_overlap_fallback():
     }
     assert find_root(nbid, "PR #16 (async email dispatch)") == "b"
     assert find_root({"c": nbid["c"]}, "PR #16 (async email dispatch)") is None
+
+
+def test_chain_subgraph_from_verdict_fields():
+    from sentinel.recap import chain_subgraph
+
+    v = _recap_verdict()
+    nodes, edges = chain_subgraph(v, incoming_label="PR #57 sync email")
+    roles = [n["role"] for n in nodes]
+    assert roles[0] == "incoming" and "decision" in roles and "issue" in roles
+    rels = {e["rel"] for e in edges}
+    assert "reverses" in rels and "justified by" in rels
+    assert chain_subgraph(Verdict(analysis="x", reverses_decision=False)) == ([], [])

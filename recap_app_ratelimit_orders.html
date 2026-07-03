@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel · Visual Memory Recap</title>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
+        --purple:#a78bfa; --purple-deep:#7c3aed; --red:#f85149; --green:#3fb950;
+        --amber:#d29922; --blue:#58a6ff; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--fg);
+       font:15px/1.55 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; padding:28px 20px 60px; }
+.wrap { max-width:1180px; margin:0 auto; }
+.topbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.topbar h1 { font-size:21px; font-weight:700; }
+.chip { display:inline-block; padding:3px 11px; border-radius:999px; font-size:12px;
+        font-weight:600; border:1px solid var(--border); background:var(--panel); }
+.chip.purple { background:#3b2a63; border-color:var(--purple-deep); color:var(--purple); }
+.chip.red    { background:#4d1a1f; border-color:#8e2c33; color:#ff9b9b; }
+.chip.gray   { color:var(--muted); }
+.hero { background:linear-gradient(135deg,#221a3a,#161b22 60%); border:1px solid var(--purple-deep);
+        border-radius:12px; padding:20px 24px; margin-bottom:20px; }
+.hero .big { font-size:18px; font-weight:650; margin-bottom:8px; }
+.hero .big b { color:var(--purple); }
+.meter { display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px; color:var(--muted); }
+.meter .track { flex:0 0 220px; height:8px; border-radius:6px; background:#21262d; overflow:hidden; }
+.meter .fill { height:100%; background:linear-gradient(90deg,var(--purple-deep),var(--purple)); }
+.grid { display:grid; grid-template-columns:1.25fr 1fr; gap:18px; margin-bottom:20px; }
+@media (max-width:900px){ .grid { grid-template-columns:1fr; } }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.panel > h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+              padding:12px 16px; border-bottom:1px solid var(--border); }
+.panel .pad { padding:14px 16px; }
+.diff { font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-x:auto; }
+.diff .ln { display:block; white-space:pre; padding:0 14px; }
+.diff .file { background:#1c2128; color:var(--blue); font-weight:600; padding-top:4px; padding-bottom:4px; }
+.diff .hunk { color:var(--purple); background:#1a1f27; }
+.diff .del  { background:rgba(248,81,73,.14); color:#ffa198; }
+.diff .add  { background:rgba(63,185,80,.13); color:#7ee787; }
+.diff .ctx  { color:var(--muted); }
+.annot { margin:8px 12px; padding:10px 14px; border-left:3px solid var(--red);
+         background:rgba(248,81,73,.08); border-radius:0 8px 8px 0; font-size:13px; }
+.annot b { color:#ff9b9b; }
+.belief-quote { border-left:3px solid var(--purple-deep); padding:8px 14px; margin:6px 0 12px;
+                background:rgba(124,58,237,.08); border-radius:0 8px 8px 0; font-style:italic; }
+.kv { font-size:13.5px; margin:9px 0; }
+.kv .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; display:block; }
+.chain { font:12.5px ui-monospace,Menlo,monospace; color:var(--blue); }
+.note { color:var(--muted); font-size:12px; font-style:italic; }
+.graph-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+              padding:12px 16px; border-bottom:1px solid var(--border); }
+.graph-head h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); flex:1; }
+button { background:var(--purple-deep); color:#fff; border:0; border-radius:8px; padding:7px 14px;
+         font-size:13px; font-weight:600; cursor:pointer; }
+button:hover { background:#8b5cf6; }
+button.ghost { background:transparent; border:1px solid var(--border); color:var(--muted); }
+button.ghost.active { border-color:var(--purple-deep); color:var(--purple); }
+svg text { font:12px -apple-system,"Segoe UI",sans-serif; fill:var(--fg); }
+.edge { stroke:#3d444d; stroke-width:1.6; fill:none; marker-end:url(#arr); transition:all .25s; }
+.edge-label { fill:var(--muted); font-size:10.5px; }
+.node circle { stroke-width:2; transition:all .25s; cursor:default; }
+.node text { font-weight:600; }
+.node .sub { font-weight:400; fill:var(--muted); font-size:10px; }
+.lit circle { filter:drop-shadow(0 0 10px var(--purple)); stroke:#fff !important; }
+.lit-edge { stroke:var(--purple) !important; stroke-width:3 !important; }
+.dim { opacity:.25; }
+.retired circle { stroke-dasharray:4 3; }
+.retired text { text-decoration:line-through; fill:var(--muted); }
+.legend { display:flex; gap:14px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--border);
+          font-size:12px; color:var(--muted); }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+.caption { min-height:22px; padding:6px 16px 12px; font-size:13px; color:var(--purple); }
+details { margin:18px 0; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+details summary { padding:12px 16px; cursor:pointer; font-weight:600; font-size:14px; }
+details .pad { border-top:1px solid var(--border); color:var(--muted); }
+footer { margin-top:26px; text-align:center; color:var(--muted); font-size:12.5px; }
+footer b { color:var(--purple); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>🛡️ Sentinel · Visual Memory Recap</h1>
+    <span class="chip purple">Rate Limiting</span>
+    <span class="chip red">supersedes a learning</span>
+    <span class="chip">human-approved belief</span>
+    
+    
+  </div>
+
+  <div class="hero">
+    <div class="big">This PR doesn't just change code — it changes <b>what your organization
+    believes about Rate Limiting</b>.</div>
+    <div>PR #63: Throttle the orders &amp; checkout endpoints in the app</div>
+    <div class="note">Author: @another-contributor · Branch: throttle-orders → main</div>
+    <div class="meter"><span>Confidence in the current belief</span>
+      <span class="track"><span class="fill" style="width:90%"></span></span>
+      <b style="color:var(--fg)">90%</b></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>What this PR changes — annotated against memory</h2>
+      <div class="diff">
+<span class="ln file">--- a/orders/views.py</span>
+<span class="ln file">+++ b/orders/views.py</span>
+<span class="ln hunk">@@</span>
+<div class="annot">⛔ <b>Memory conflict:</b> the removed lines undo <b>PR #14</b> — <i>to avoid &#x27;two overlapping enforcement layers&#x27; that led to &#x27;double-counting&#x27; of rate limits</i></div>
+<span class="ln add">+from django_ratelimit.decorators import ratelimit</span>
+<span class="ln add">+</span>
+<span class="ln add">+@ratelimit(key=&quot;user_or_ip&quot;, rate=&quot;20/s&quot;, block=True)</span>
+<span class="ln ctx"> def list_orders(request):</span>
+<span class="ln ctx">     return Response(get_orders(request.user))</span>
+<span class="ln ctx"> </span>
+<span class="ln file">--- a/checkout/views.py</span>
+<span class="ln file">+++ b/checkout/views.py</span>
+<span class="ln hunk">@@</span>
+<span class="ln add">+from rest_framework.throttling import ScopedRateThrottle</span>
+<span class="ln add">+</span>
+<span class="ln ctx"> class CheckoutView(APIView):</span>
+<span class="ln add">+    throttle_classes = [ScopedRateThrottle]</span>
+<span class="ln add">+    throttle_scope = &quot;checkout&quot;</span>
+<span class="ln ctx">     def post(self, request):</span>
+<span class="ln ctx">         return Response(create_order(request.user, request.cart), status=201)</span>
+</div>
+      <div class="pad note">Following the same idea as the search throttling, this PR protects the `/orders` and
+`/checkout` endpoints by adding DRF throttle classes / `@ratelimit` decorators on the
+views. Limiting in application code keeps the rules close to the handlers and avoids
+touching the gateway config, which most of us don&#x27;t have access to.</div>
+    </div>
+    <div class="panel">
+      <h2>What your organization currently believes</h2>
+      <div class="pad">
+        <div class="belief-quote">to avoid &#x27;two overlapping enforcement layers&#x27; that led to &#x27;double-counting&#x27; of rate limits</div>
+        <div class="kv"><span class="k">This holds only while</span>the single enforcement layer at the gateway allows for a standardized request budget</div>
+        <div class="kv"><span class="k">Reconstructed via</span>
+          <span class="chain">PR #14 (removed overlapping rate limits) -&gt; Issue #6 (legitimate users throttled)</span></div>
+        <div class="kv"><span class="k">Memory impact</span>
+          ⚠️ This PR would <b>supersede</b> PR #14.</div>
+        <div class="kv"><span class="k">If merged</span>reintroduces overlapping rate limiting enforcement, leading to potential double-counting and unpredictable throttling for legitimate users</div>
+        <p class="note">no shared keywords, no #ref from this PR — recovered by graph + semantic reasoning</p>
+      </div>
+    </div>
+  </div>
+
+  
+<div class="panel" style="margin-bottom:20px">
+  <div class="graph-head">
+    <h2>The evidence graph Sentinel traversed</h2>
+    
+    <button onclick="playTraversal(0)">▶ Play the traversal</button>
+  </div>
+  <svg viewBox="0 0 920 540" width="100%">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="26" refY="5" markerWidth="7"
+      markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#3d444d"/></marker></defs>
+    <g class="gstate" data-state="0" style="">
+<path id="st0-e-__incoming__-c75bad95-a3a8-5602-9658-618bfdc12333" class="edge" data-src="__incoming__" data-dst="c75bad95-a3a8-5602-9658-618bfdc12333" d="M120,270 Q317,256 515,270"/><text class="edge-label" x="317" y="252" text-anchor="middle">reverses</text>
+<path id="st0-e-713644c3-609b-585c-8d95-016161de7d17-c75bad95-a3a8-5602-9658-618bfdc12333" class="edge" data-src="713644c3-609b-585c-8d95-016161de7d17" data-dst="c75bad95-a3a8-5602-9658-618bfdc12333" d="M403,110 Q459,176 515,270"/><text class="edge-label" x="459" y="172" text-anchor="middle">resolved by</text>
+<path id="st0-e-55d2cd50-823c-5358-a1c7-cb91c35e1650-af21795d-0bf8-5f8c-8376-23de7c04076c" class="edge" data-src="55d2cd50-823c-5358-a1c7-cb91c35e1650" data-dst="af21795d-0bf8-5f8c-8376-23de7c04076c" d="M518,75 Q574,237 631,427"/><text class="edge-label" x="574" y="233" text-anchor="middle">author of</text>
+<path id="st0-e-713644c3-609b-585c-8d95-016161de7d17-55d2cd50-823c-5358-a1c7-cb91c35e1650" class="edge" data-src="713644c3-609b-585c-8d95-016161de7d17" data-dst="55d2cd50-823c-5358-a1c7-cb91c35e1650" d="M403,110 Q460,79 518,75"/><text class="edge-label" x="460" y="75" text-anchor="middle">reported by</text>
+<path id="st0-e-713644c3-609b-585c-8d95-016161de7d17-94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" class="edge" data-src="713644c3-609b-585c-8d95-016161de7d17" data-dst="94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" d="M403,110 Q517,98 631,113"/><text class="edge-label" x="517" y="94" text-anchor="middle">involves</text>
+<path id="st0-e-94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e-3e2eebcc-6a1e-5a31-80ca-9a6689a6353c" class="edge" data-src="94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" data-dst="3e2eebcc-6a1e-5a31-80ca-9a6689a6353c" d="M631,113 Q666,148 701,210"/><text class="edge-label" x="666" y="144" text-anchor="middle">configured in</text>
+<path id="st0-e-699e070c-eb35-556f-9dec-c818296886ab-94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" class="edge" data-src="699e070c-eb35-556f-9dec-c818296886ab" data-dst="94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" d="M701,330 Q666,207 631,113"/><text class="edge-label" x="666" y="203" text-anchor="middle">no longer uses</text>
+<path id="st0-e-af21795d-0bf8-5f8c-8376-23de7c04076c-94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" class="edge" data-src="af21795d-0bf8-5f8c-8376-23de7c04076c" data-dst="94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" d="M631,427 Q631,256 631,113"/><text class="edge-label" x="631" y="252" text-anchor="middle">serves as</text>
+<path id="st0-e-3e2eebcc-6a1e-5a31-80ca-9a6689a6353c-ce2cfbae-e224-51da-aa8b-d9b7bfe38555" class="edge" data-src="3e2eebcc-6a1e-5a31-80ca-9a6689a6353c" data-dst="ce2cfbae-e224-51da-aa8b-d9b7bfe38555" d="M701,210 Q552,306 403,430"/><text class="edge-label" x="552" y="302" text-anchor="middle">references</text>
+<path id="st0-e-115dc360-39eb-58ac-8ea9-73a1d99e07e7-94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" class="edge" data-src="115dc360-39eb-58ac-8ea9-73a1d99e07e7" data-dst="94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" d="M518,465 Q574,275 631,113"/><text class="edge-label" x="574" y="271" text-anchor="middle">no longer uses</text>
+<g id="st0-__incoming__" class="node" data-state="0" data-nid="__incoming__"><circle cx="120" cy="270" r="30" fill="#dc2626" stroke="#dc2626" fill-opacity="0.22"/><text x="120" y="232" text-anchor="middle">🔻 PR #63: Throttle the orders &amp; chec</text><text class="sub" x="120" y="314" text-anchor="middle">incoming</text></g>
+<g id="st0-c75bad95-a3a8-5602-9658-618bfdc12333" class="node" data-state="0" data-nid="c75bad95-a3a8-5602-9658-618bfdc12333"><circle cx="515" cy="270" r="30" fill="#7c3aed" stroke="#7c3aed" fill-opacity="0.22"/><text x="515" y="232" text-anchor="middle">🛡️ PR #14</text><text class="sub" x="515" y="314" text-anchor="middle">decision</text></g>
+<g id="st0-713644c3-609b-585c-8d95-016161de7d17" class="node" data-state="0" data-nid="713644c3-609b-585c-8d95-016161de7d17"><circle cx="403" cy="110" r="22" fill="#16a34a" stroke="#16a34a" fill-opacity="0.22"/><text x="403" y="80" text-anchor="middle">🐛 Issue #6: Legitimate Users Throttl</text><text class="sub" x="403" y="146" text-anchor="middle">issue</text></g>
+<g id="st0-55d2cd50-823c-5358-a1c7-cb91c35e1650" class="node" data-state="0" data-nid="55d2cd50-823c-5358-a1c7-cb91c35e1650"><circle cx="518" cy="75" r="22" fill="#f59e0b" stroke="#f59e0b" fill-opacity="0.22"/><text x="518" y="45" text-anchor="middle">👤 Notchayan</text><text class="sub" x="518" y="111" text-anchor="middle">person</text></g>
+<g id="st0-94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e" class="node" data-state="0" data-nid="94564128-a5e3-5ffa-9aa9-4e6bf5a8a38e"><circle cx="631" cy="113" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="631" y="83" text-anchor="middle">⚙️ Api_gateway</text><text class="sub" x="631" y="149" text-anchor="middle">tech</text></g>
+<g id="st0-3e2eebcc-6a1e-5a31-80ca-9a6689a6353c" class="node" data-state="0" data-nid="3e2eebcc-6a1e-5a31-80ca-9a6689a6353c"><circle cx="701" cy="210" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="701" y="180" text-anchor="middle">⚙️ Api.conf</text><text class="sub" x="701" y="246" text-anchor="middle">tech</text></g>
+<g id="st0-699e070c-eb35-556f-9dec-c818296886ab" class="node" data-state="0" data-nid="699e070c-eb35-556f-9dec-c818296886ab"><circle cx="701" cy="330" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="701" y="300" text-anchor="middle">⚙️ Views.py (search)</text><text class="sub" x="701" y="366" text-anchor="middle">tech</text></g>
+<g id="st0-af21795d-0bf8-5f8c-8376-23de7c04076c" class="node" data-state="0" data-nid="af21795d-0bf8-5f8c-8376-23de7c04076c"><circle cx="631" cy="427" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="631" y="397" text-anchor="middle">⚙️ Nginx</text><text class="sub" x="631" y="463" text-anchor="middle">tech</text></g>
+<g id="st0-115dc360-39eb-58ac-8ea9-73a1d99e07e7" class="node" data-state="0" data-nid="115dc360-39eb-58ac-8ea9-73a1d99e07e7"><circle cx="518" cy="465" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="518" y="435" text-anchor="middle">⚙️ Views.py (products)</text><text class="sub" x="518" y="501" text-anchor="middle">tech</text></g>
+<g id="st0-ce2cfbae-e224-51da-aa8b-d9b7bfe38555" class="node" data-state="0" data-nid="ce2cfbae-e224-51da-aa8b-d9b7bfe38555"><circle cx="403" cy="430" r="22" fill="#0891b2" stroke="#0891b2" fill-opacity="0.22"/><text x="403" y="400" text-anchor="middle">⚙️ Errors.conf</text><text class="sub" x="403" y="466" text-anchor="middle">tech</text></g>
+</g>
+  </svg>
+  <div class="caption" id="cap-0"></div>
+  <div class="legend"><span><i style="background:#7c3aed"></i>decision</span><span><i style="background:#dc2626"></i>incoming</span><span><i style="background:#2563eb"></i>pr</span><span><i style="background:#16a34a"></i>issue</span><span><i style="background:#0891b2"></i>tech</span><span><i style="background:#f59e0b"></i>person</span><span><i style="background:#6e7781"></i>retired</span></div>
+</div>
+<p class="note" style="margin:-8px 4px 20px">The reconstruction path — <b>incoming PR → governing
+decision → incident issue</b> — shares no keywords and no <code>#ref</code> across the hop:
+vector similarity alone and the GitHub API alone both miss it. Typed graph traversal + semantic
+recall (Cognee) is what connects them.</p>
+
+
+  <details><summary>🔎 How Sentinel reconstructed this</summary>
+  <div class="pad">The PR adds rate limiting decorators to the `/orders` and `/checkout` endpoints by introducing `@ratelimit` and `ScopedRateThrottle`, which effectively re-introduces a second layer of rate limiting in the application code. This is contradictory to the previous decision made in PR #14, where it was decided to enforce rate limiting only at the gateway level to prevent overlapping enforcement layers. Therefore, the PR&#x27;s changes conflict with this decision by reinstituting application-level throttling.</div></details>
+
+  <footer>🛡️ <b>Sentinel</b> — every element on this page is <b>retrieved memory</b>
+  (Cognee graph + vector recall), not a re-reading of the diff · remember / recall / improve / forget</footer>
+</div>
+<script>
+const RECAP = {"states": [{"path": ["__incoming__", "c75bad95-a3a8-5602-9658-618bfdc12333", "713644c3-609b-585c-8d95-016161de7d17"], "captions": ["1 \u00b7 The incoming change: PR #63: Throttle the orders & chec", "2 \u00b7 Semantic recall matches the governing decision: PR #14", "3 \u00b7 A typed graph edge reaches the rationale: Issue #6: Legitimate Users Throttl \u2014 no shared words, no #ref"]}],
+  "doneCaption": "The lesson, reconstructed — only graph + semantic memory could make this hop."};
+
+function playTraversal(stateIdx){
+  const data = RECAP.states[stateIdx];
+  const steps = data.path;
+  document.querySelectorAll('.lit').forEach(e=>e.classList.remove('lit'));
+  document.querySelectorAll('.lit-edge').forEach(e=>e.classList.remove('lit-edge'));
+  const cap = document.getElementById('cap-'+stateIdx);
+  let i = 0;
+  function step(){
+    if(i >= steps.length){ cap.textContent = RECAP.doneCaption; return; }
+    const nid = steps[i];
+    const el = document.getElementById('st'+stateIdx+'-'+nid);
+    if(el){ el.classList.add('lit'); }
+    if(i > 0){
+      const eid = document.getElementById('st'+stateIdx+'-e-'+steps[i-1]+'-'+nid) ||
+                  document.getElementById('st'+stateIdx+'-e-'+nid+'-'+steps[i-1]);
+      if(eid){ eid.classList.add('lit-edge'); }
+    }
+    cap.textContent = data.captions[i] || '';
+    i++; setTimeout(step, 950);
+  }
+  step();
+}
+function showState(idx){
+  document.querySelectorAll('.gstate').forEach((g,k)=>{ g.style.display = (k===idx)?'':'none'; });
+  document.querySelectorAll('.stbtn').forEach((b,k)=>{ b.classList.toggle('active', k===idx); });
+}
+document.querySelectorAll('.node').forEach(n=>{
+  n.addEventListener('mouseenter', ()=>{
+    const sid = n.dataset.state, nid = n.dataset.nid;
+    document.querySelectorAll('.gstate[data-state="'+sid+'"] .edge').forEach(e=>{
+      if(e.dataset.src!==nid && e.dataset.dst!==nid){ e.classList.add('dim'); }
+    });
+  });
+  n.addEventListener('mouseleave', ()=>{
+    document.querySelectorAll('.dim').forEach(e=>e.classList.remove('dim'));
+  });
+});
+
+</script>
+</body>
+</html>

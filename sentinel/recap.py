@@ -177,6 +177,41 @@ def curate_subgraph(nbid: dict, edges: list[dict], decision_reference: str,
     return nodes, out_edges
 
 
+def chain_subgraph(verdict: Verdict, incoming_label: str = "This PR") -> tuple[list[dict], list[dict]]:
+    """Pure fallback: build the evidence subgraph from the Verdict's own fields.
+
+    cognify does not reliably mint a resolvable node for every decision, so when the
+    graph-name lookup fails we render the chain recall actually reconstructed —
+    `evidence_chain` ("PR #16 (made it async) -> Issue #8 (the incident)") plus the
+    affected capability. Still 100% retrieved memory; just sourced from the verdict
+    instead of a node-name match.
+    """
+    if not verdict.reverses_decision:
+        return [], []
+    hops = [h.strip() for h in re.split(r"->|→", verdict.evidence_chain or "") if h.strip()]
+    if not hops:
+        if not verdict.decision_reference:
+            return [], []
+        hops = [verdict.decision_reference]
+
+    nodes = [{"id": "inc", "label": incoming_label[:34], "role": "incoming"}]
+    edges: list[dict] = []
+    prev = "inc"
+    for k, hop in enumerate(hops):
+        nid = f"hop{k}"
+        low = hop.lower()
+        role = "decision" if k == 0 else ("issue" if "issue" in low else "pr")
+        nodes.append({"id": nid, "label": _pretty(hop), "role": role})
+        edges.append({"src": prev, "dst": nid,
+                      "rel": "reverses" if k == 0 else "justified by"})
+        prev = nid
+    cap = (verdict.affected_capability or "").strip()
+    if cap:
+        nodes.append({"id": "cap", "label": _pretty(cap), "role": "tech"})
+        edges.append({"src": "hop0", "dst": "cap", "rel": "governs"})
+    return nodes, edges
+
+
 def traversal_path(nodes: list[dict], edges: list[dict]) -> list[str]:
     """The SPINE-1 story as an ordered node-id path: incoming → decision → incident issue.
 
@@ -587,15 +622,19 @@ async def recap_from_live_graph(verdict: Verdict, pr_text: str, *, repo: str = "
     eds = [{"src": str(e[0]), "dst": str(e[1]), "rel": str(e[2])}
            for e in raw_edges if isinstance(e, (list, tuple)) and len(e) >= 3]
     try:
+        first_line = next((ln.strip("# ").strip() for ln in pr_text.splitlines() if ln.strip()),
+                          "This PR")
         nodes, edges = curate_subgraph(nbid, eds, verdict.decision_reference)
         if nodes:
             # Pin the incoming PR into the picture — it's the change under review, not
             # stored memory, so it never comes back from the graph fetch.
-            first_line = next((ln.strip("# ").strip() for ln in pr_text.splitlines() if ln.strip()),
-                              "This PR")
             root = nodes[0]["id"]
             nodes.insert(0, {"id": "__incoming__", "label": first_line[:34], "role": "incoming"})
             edges.insert(0, {"src": "__incoming__", "dst": root, "rel": "reverses"})
+        else:
+            # Entity names didn't resolve (cognify roll) — render the chain the verdict
+            # itself reconstructed. Same retrieved memory, sturdier source.
+            nodes, edges = chain_subgraph(verdict, incoming_label=first_line)
         states = [("Current memory", nodes, edges)] if nodes else []
         return render_recap_html(verdict, pr_text, states, repo=repo)
     except Exception:

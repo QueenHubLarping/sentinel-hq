@@ -37,7 +37,7 @@ from sentinel.github_pr import (  # noqa: E402
     issue_number,
     load_pr_text,
     post_comment,
-    pr_head_branch,
+    repo_default_branch,
 )
 from sentinel.improve import record_noise, record_noise_file  # noqa: E402
 from sentinel.ingest import ingest_corpus  # noqa: E402
@@ -88,11 +88,12 @@ async def handle_resolve() -> int:
         post_comment("🛡️ _Sentinel_: I couldn't find a reversal I'd flagged on this PR to retire.")
         return 0
 
-    # Check out the PR branch first so the .sentinel/retired.json mark_intentional writes
-    # lands in this branch's workspace and can be committed as the durable backstop.
+    # Check out the DEFAULT branch so the retired.json ledger reaches every future
+    # run's merge ref (a PR-branch commit would only protect this one PR). This is
+    # what makes the forget durable on ephemeral runners with no graph persistence.
     branch = None
     try:
-        branch = pr_head_branch(number)
+        branch = repo_default_branch()
         checkout_branch(branch)
     except Exception as exc:  # noqa: BLE001 — advisory: no branch → skip the ledger commit, still forget
         print(f"branch checkout skipped (ledger won't be committed): {exc}")
@@ -142,7 +143,10 @@ async def handle_feedback() -> int:
         post_comment("🛡️ _Sentinel_: I couldn't find a flag of mine on this PR to mark as noise.")
         return 0
 
-    branch = pr_head_branch(number)
+    # Commit the dismissal to the DEFAULT branch: the whole point of a 👎 is that the
+    # drift stops surfacing on FUTURE, unrelated PRs — whose merge refs only ever
+    # include main, not the branch of the PR where the maintainer said "noise".
+    branch = repo_default_branch()
     checkout_branch(branch)
     path = record_noise_file(decision_ref)
     commit_and_push(branch, f"chore(sentinel): dismiss {decision_ref} drift as noise (/sentinel noise in #{number})")

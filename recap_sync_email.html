@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel · Visual Memory Recap</title>
+<style>
+:root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
+        --purple:#a78bfa; --purple-deep:#7c3aed; --red:#f85149; --green:#3fb950;
+        --amber:#d29922; --blue:#58a6ff; }
+* { box-sizing:border-box; margin:0; padding:0; }
+body { background:var(--bg); color:var(--fg);
+       font:15px/1.55 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif; padding:28px 20px 60px; }
+.wrap { max-width:1180px; margin:0 auto; }
+.topbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.topbar h1 { font-size:21px; font-weight:700; }
+.chip { display:inline-block; padding:3px 11px; border-radius:999px; font-size:12px;
+        font-weight:600; border:1px solid var(--border); background:var(--panel); }
+.chip.purple { background:#3b2a63; border-color:var(--purple-deep); color:var(--purple); }
+.chip.red    { background:#4d1a1f; border-color:#8e2c33; color:#ff9b9b; }
+.chip.gray   { color:var(--muted); }
+.hero { background:linear-gradient(135deg,#221a3a,#161b22 60%); border:1px solid var(--purple-deep);
+        border-radius:12px; padding:20px 24px; margin-bottom:20px; }
+.hero .big { font-size:18px; font-weight:650; margin-bottom:8px; }
+.hero .big b { color:var(--purple); }
+.meter { display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px; color:var(--muted); }
+.meter .track { flex:0 0 220px; height:8px; border-radius:6px; background:#21262d; overflow:hidden; }
+.meter .fill { height:100%; background:linear-gradient(90deg,var(--purple-deep),var(--purple)); }
+.grid { display:grid; grid-template-columns:1.25fr 1fr; gap:18px; margin-bottom:20px; }
+@media (max-width:900px){ .grid { grid-template-columns:1fr; } }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+.panel > h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted);
+              padding:12px 16px; border-bottom:1px solid var(--border); }
+.panel .pad { padding:14px 16px; }
+.diff { font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-x:auto; }
+.diff .ln { display:block; white-space:pre; padding:0 14px; }
+.diff .file { background:#1c2128; color:var(--blue); font-weight:600; padding-top:4px; padding-bottom:4px; }
+.diff .hunk { color:var(--purple); background:#1a1f27; }
+.diff .del  { background:rgba(248,81,73,.14); color:#ffa198; }
+.diff .add  { background:rgba(63,185,80,.13); color:#7ee787; }
+.diff .ctx  { color:var(--muted); }
+.annot { margin:8px 12px; padding:10px 14px; border-left:3px solid var(--red);
+         background:rgba(248,81,73,.08); border-radius:0 8px 8px 0; font-size:13px; }
+.annot b { color:#ff9b9b; }
+.belief-quote { border-left:3px solid var(--purple-deep); padding:8px 14px; margin:6px 0 12px;
+                background:rgba(124,58,237,.08); border-radius:0 8px 8px 0; font-style:italic; }
+.kv { font-size:13.5px; margin:9px 0; }
+.kv .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; display:block; }
+.chain { font:12.5px ui-monospace,Menlo,monospace; color:var(--blue); }
+.note { color:var(--muted); font-size:12px; font-style:italic; }
+.graph-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+              padding:12px 16px; border-bottom:1px solid var(--border); }
+.graph-head h2 { font-size:13px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); flex:1; }
+button { background:var(--purple-deep); color:#fff; border:0; border-radius:8px; padding:7px 14px;
+         font-size:13px; font-weight:600; cursor:pointer; }
+button:hover { background:#8b5cf6; }
+button.ghost { background:transparent; border:1px solid var(--border); color:var(--muted); }
+button.ghost.active { border-color:var(--purple-deep); color:var(--purple); }
+svg text { font:12px -apple-system,"Segoe UI",sans-serif; fill:var(--fg); }
+.edge { stroke:#3d444d; stroke-width:1.6; fill:none; marker-end:url(#arr); transition:all .25s; }
+.edge-label { fill:var(--muted); font-size:10.5px; }
+.node circle { stroke-width:2; transition:all .25s; cursor:default; }
+.node text { font-weight:600; }
+.node .sub { font-weight:400; fill:var(--muted); font-size:10px; }
+.lit circle { filter:drop-shadow(0 0 10px var(--purple)); stroke:#fff !important; }
+.lit-edge { stroke:var(--purple) !important; stroke-width:3 !important; }
+.dim { opacity:.25; }
+.retired circle { stroke-dasharray:4 3; }
+.retired text { text-decoration:line-through; fill:var(--muted); }
+.legend { display:flex; gap:14px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--border);
+          font-size:12px; color:var(--muted); }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; }
+.caption { min-height:22px; padding:6px 16px 12px; font-size:13px; color:var(--purple); }
+details { margin:18px 0; background:var(--panel); border:1px solid var(--border); border-radius:12px; }
+details summary { padding:12px 16px; cursor:pointer; font-weight:600; font-size:14px; }
+details .pad { border-top:1px solid var(--border); color:var(--muted); }
+footer { margin-top:26px; text-align:center; color:var(--muted); font-size:12.5px; }
+footer b { color:var(--purple); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>🛡️ Sentinel · Visual Memory Recap</h1>
+    <span class="chip purple">Messaging</span>
+    <span class="chip red">supersedes a learning</span>
+    <span class="chip">human-approved belief</span>
+    
+    
+  </div>
+
+  <div class="hero">
+    <div class="big">This PR doesn't just change code — it changes <b>what your organization
+    believes about Messaging</b>.</div>
+    <div>PR #57: Simplify checkout — send confirmation email synchronously</div>
+    <div class="note">Author: @new-contributor · Branch: simplify-email → main</div>
+    <div class="meter"><span>Confidence in the current belief</span>
+      <span class="track"><span class="fill" style="width:90%"></span></span>
+      <b style="color:var(--fg)">90%</b></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>What this PR changes — annotated against memory</h2>
+      <div class="diff">
+<span class="ln file">--- a/checkout/views.py</span>
+<span class="ln file">+++ b/checkout/views.py</span>
+<span class="ln hunk">@@ def checkout(request):</span>
+<div class="annot">⛔ <b>Memory conflict:</b> the removed lines undo <b>PR #16 (async email dispatch via Redis/Celery queue)</b> — <i>the shopper should get an instant reply the moment the purchase is durably recorded, without being held up for non-essential tasks like sending emails.</i></div>
+<span class="ln ctx">         order = create_order(request.user, request.cart)</span>
+<span class="ln del">-        # hand off email to the background queue</span>
+<span class="ln del">-        send_order_confirmation_task.delay(order.id)</span>
+<span class="ln add">+        # send the confirmation email directly — simpler, no queue needed</span>
+<span class="ln add">+        send_email_smtp(order.user.email, render_confirmation(order))</span>
+<span class="ln ctx">         return Response({&quot;order_id&quot;: order.id}, status=201)</span>
+<span class="ln ctx"> </span>
+<span class="ln file">--- a/checkout/tasks.py</span>
+<span class="ln file">+++ b/checkout/tasks.py</span>
+<span class="ln hunk">@@</span>
+<span class="ln del">-@celery_app.task(bind=True, max_retries=3)</span>
+<span class="ln del">-def send_order_confirmation_task(self, order_id):</span>
+<span class="ln del">-    ...</span>
+</div>
+      <div class="pad note">The Celery + Redis setup for sending confirmation emails feels like overkill and
+adds moving parts to deploy. This PR simplifies it: the checkout endpoint now sends
+the confirmation email directly via SendGrid SMTP, inline, before returning. One
+fewer service to run, easier to reason about.</div>
+    </div>
+    <div class="panel">
+      <h2>What your organization currently believes</h2>
+      <div class="pad">
+        <div class="belief-quote">the shopper should get an instant reply the moment the purchase is durably recorded, without being held up for non-essential tasks like sending emails.</div>
+        <div class="kv"><span class="k">This holds only while</span>the previous synchronous email call added significant delays to the purchase flow</div>
+        <div class="kv"><span class="k">Reconstructed via</span>
+          <span class="chain">PR #16 (async email dispatch via Redis/Celery queue) -&gt; Issue #8 (the latency incident)</span></div>
+        <div class="kv"><span class="k">Memory impact</span>
+          ⚠️ This PR would <b>supersede</b> PR #16 (async email dispatch via Redis/Celery queue).</div>
+        <div class="kv"><span class="k">If merged</span>reintroduces significant delays to the checkout process, as the confirmation email sending will cause the checkout flow to wait for the SMTP call to complete.</div>
+        <p class="note">no shared keywords, no #ref from this PR — recovered by graph + semantic reasoning</p>
+      </div>
+    </div>
+  </div>
+
+  
+
+  <details><summary>🔎 How Sentinel reconstructed this</summary>
+  <div class="pad">removes the asynchronous email dispatch using Celery and Redis, adds synchronous email sending directly via SMTP in the checkout endpoint.</div></details>
+
+  <footer>🛡️ <b>Sentinel</b> — every element on this page is <b>retrieved memory</b>
+  (Cognee graph + vector recall), not a re-reading of the diff · remember / recall / improve / forget</footer>
+</div>
+<script>
+const RECAP = {"states": [],
+  "doneCaption": "The lesson, reconstructed — only graph + semantic memory could make this hop."};
+
+function playTraversal(stateIdx){
+  const data = RECAP.states[stateIdx];
+  const steps = data.path;
+  document.querySelectorAll('.lit').forEach(e=>e.classList.remove('lit'));
+  document.querySelectorAll('.lit-edge').forEach(e=>e.classList.remove('lit-edge'));
+  const cap = document.getElementById('cap-'+stateIdx);
+  let i = 0;
+  function step(){
+    if(i >= steps.length){ cap.textContent = RECAP.doneCaption; return; }
+    const nid = steps[i];
+    const el = document.getElementById('st'+stateIdx+'-'+nid);
+    if(el){ el.classList.add('lit'); }
+    if(i > 0){
+      const eid = document.getElementById('st'+stateIdx+'-e-'+steps[i-1]+'-'+nid) ||
+                  document.getElementById('st'+stateIdx+'-e-'+nid+'-'+steps[i-1]);
+      if(eid){ eid.classList.add('lit-edge'); }
+    }
+    cap.textContent = data.captions[i] || '';
+    i++; setTimeout(step, 950);
+  }
+  step();
+}
+function showState(idx){
+  document.querySelectorAll('.gstate').forEach((g,k)=>{ g.style.display = (k===idx)?'':'none'; });
+  document.querySelectorAll('.stbtn').forEach((b,k)=>{ b.classList.toggle('active', k===idx); });
+}
+document.querySelectorAll('.node').forEach(n=>{
+  n.addEventListener('mouseenter', ()=>{
+    const sid = n.dataset.state, nid = n.dataset.nid;
+    document.querySelectorAll('.gstate[data-state="'+sid+'"] .edge').forEach(e=>{
+      if(e.dataset.src!==nid && e.dataset.dst!==nid){ e.classList.add('dim'); }
+    });
+  });
+  n.addEventListener('mouseleave', ()=>{
+    document.querySelectorAll('.dim').forEach(e=>e.classList.remove('dim'));
+  });
+});
+
+</script>
+</body>
+</html>
