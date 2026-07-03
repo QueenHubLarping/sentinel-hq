@@ -85,6 +85,44 @@ def _root_label(decision_reference: str, fallback: str) -> str:
     return f"{adr}<br/>{title}" if title else adr
 
 
+def find_root(nbid: dict, decision_reference: str) -> str | None:
+    """Resolve the flagged decision to a graph node id, leniently.
+
+    PR-keyed references ("PR #42 (async email)") rarely match a cognify node name
+    byte-for-byte, so try in order: exact name, the PR number in any common node-name
+    form, the ADR id (legacy), then the parenthesized topic as a substring.
+    """
+    ref = (decision_reference or "").strip().lower()
+    if not ref:
+        return None
+    by_name = {d["name"].strip().lower(): i for i, d in nbid.items()}
+    if ref in by_name:
+        return by_name[ref]
+
+    m = re.search(r"pr\s*[-#]?\s*(\d+)", ref)
+    if m:
+        num = m.group(1)
+        pats = (f"pr #{num}", f"pr-{num}", f"pr {num}", f"pr#{num}")
+        for i, d in nbid.items():
+            n = d["name"].strip().lower()
+            if any(p in n for p in pats):
+                return i
+
+    m = re.search(r"adr[- ](\d+)", ref)
+    if m:
+        adr = f"adr-{int(m.group(1)):03d}"
+        if adr in by_name:
+            return by_name[adr]
+
+    paren = re.search(r"\(([^)]+)\)", decision_reference or "")
+    if paren:
+        topic = paren.group(1).strip().lower()
+        for i, d in nbid.items():
+            if topic and topic in d["name"].strip().lower():
+                return i
+    return None
+
+
 def build_mermaid(nbid: dict, edges: list[dict], decision_reference: str,
                   incoming_label: str = "This PR", max_nodes: int = 9) -> str:
     """Pure: build the Mermaid block for the subgraph around the flagged decision.
@@ -94,10 +132,7 @@ def build_mermaid(nbid: dict, edges: list[dict], decision_reference: str,
     """
     persons = _persons(nbid, edges)
 
-    # Resolve the decision node by normalized name (e.g. 'adr-001').
-    m = re.search(r"ADR[- ](\d+)", decision_reference, re.IGNORECASE)
-    focus = f"adr-{int(m.group(1)):03d}" if m else decision_reference.strip().lower()
-    root = next((i for i, d in nbid.items() if d["name"].strip().lower() == focus), None)
+    root = find_root(nbid, decision_reference)
     if root is None:
         return ""
 

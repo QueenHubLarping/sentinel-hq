@@ -707,3 +707,15 @@ def test_render_recap_two_states_renders_toggle():
     assert "Before forget" in html_out and "After forget" in html_out
     assert 'showState(1)' in html_out                  # the toggle buttons exist
     assert html_out.count('class="gstate"') == 2
+
+
+def test_build_mermaid_resolves_pr_keyed_reference():
+    nbid = {
+        "d": {"name": "PR #16 (async email dispatch)", "type": "Entity"},
+        "i": {"name": "issue #8 latency incident", "type": "Entity"},
+    }
+    edges = [{"src": "d", "dst": "i", "rel": "justified_by"}]
+    out = build_mermaid(nbid, edges, "PR #16 (async email dispatch via queue)")
+    # The ADR-era resolver returned "" here; the lenient resolver must find the node.
+    assert "flowchart LR" in out
+    assert '|"justified by"|' in out
