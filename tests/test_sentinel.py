@@ -719,3 +719,17 @@ def test_build_mermaid_resolves_pr_keyed_reference():
     # The ADR-era resolver returned "" here; the lenient resolver must find the node.
     assert "flowchart LR" in out
     assert '|"justified by"|' in out
+
+
+def test_find_root_token_overlap_fallback():
+    from sentinel.graph_viz import find_root
+
+    # No "pr #16" entity exists (cognify skipped it) — the resolver must still find the
+    # decision node by distinctive-word overlap, and a single shared word must NOT match.
+    nbid = {
+        "a": {"name": "order_confirmation_email", "type": "Entity"},          # 1 hit — too weak
+        "b": {"name": "pr-42-implement-async-email.md", "type": "Entity"},    # 2 hits — winner
+        "c": {"name": "gateway rate limiting", "type": "Entity"},
+    }
+    assert find_root(nbid, "PR #16 (async email dispatch)") == "b"
+    assert find_root({"c": nbid["c"]}, "PR #16 (async email dispatch)") is None

@@ -120,6 +120,22 @@ def find_root(nbid: dict, decision_reference: str) -> str | None:
         for i, d in nbid.items():
             if topic and topic in d["name"].strip().lower():
                 return i
+
+    # Last resort — token overlap. cognify does not reliably mint a "pr #16 ..." entity
+    # for every establishing PR, so score nodes by how many distinctive reference words
+    # their name contains and take the best with ≥2 hits (1 hit is too easily wrong).
+    stop = {"this", "that", "with", "from", "into", "feat", "chore", "docs"}
+    tokens = {w for w in re.findall(r"[a-z]{4,}", ref) if w not in stop}
+    if tokens:
+        best, best_score = None, 0
+        for i, d in nbid.items():
+            name = d["name"].strip().lower()
+            score = sum(1 for w in tokens if w in name)
+            if score > best_score or (score == best_score and best is not None
+                                      and score >= 2 and len(name) < len(nbid[best]["name"])):
+                best, best_score = i, score
+        if best is not None and best_score >= 2:
+            return best
     return None
 
 
