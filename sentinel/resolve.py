@@ -105,6 +105,18 @@ async def mark_intentional(decision_reference: str = "") -> dict:
     return await _mark_intentional_adr(decision_reference)
 
 
+def _linked_issue_numbers(pr_num: int) -> set[int]:
+    """Issue numbers the establishing PR's body links (its rationale/incident issues)."""
+    from sentinel.sources import load_snapshot
+
+    snap = load_snapshot() or {}
+    for pr in snap.get("prs", []) or []:
+        if pr.get("number") == pr_num:
+            return {int(m) for m in re.findall(r"issue\s*#(\d+)", pr.get("body") or "",
+                                               re.IGNORECASE)}
+    return set()
+
+
 async def _mark_intentional_pr(decision_reference: str, pr_num: int) -> dict:
     """Forget the PR-keyed decision: every doc for this PR (live label + bundled file)."""
     from sentinel.retired import record_retired
@@ -114,6 +126,13 @@ async def _mark_intentional_pr(decision_reference: str, pr_num: int) -> dict:
     labels = {f"PR-{pr_num}.md"}
     for path in sorted(prs_dir().glob(f"PR-{pr_num}*.md")):
         labels.add(path.name)
+
+    # The rationale lives in the linked incident ISSUE — an intentional supersession must
+    # retire it from ACTIVE memory too, or recall re-derives the old belief from the issue
+    # and keeps proposing the flag. The issue itself stays on GitHub (history preserved);
+    # it just stops being what the organization currently believes.
+    for issue_num in sorted(_linked_issue_numbers(pr_num)):
+        labels.add(f"ISSUE-{issue_num}.md")
 
     retired = []
     for label in sorted(labels):

@@ -97,9 +97,14 @@ async def ingest_corpus() -> None:
 
     for issue in issues:
         label, content = sources.issue_to_doc(issue)
+        data_id = corpus_file_data_id(label)
+        if str(data_id) in retired_ids:
+            # Rationale issue retired together with its superseded decision — no longer
+            # active belief (see resolve._mark_intentional_pr).
+            print(f"   - skipping {label} (rationale retired with its decision)")
+            continue
         await cognee.add(
-            DataItem(data=content, label=label, data_id=corpus_file_data_id(label)),
-            dataset_name=DATASET_NAME,
+            DataItem(data=content, label=label, data_id=data_id), dataset_name=DATASET_NAME
         )
         staged += 1
         print(f"   + {label} (Issue: \"{(issue.get('title') or '')[:48]}\")")

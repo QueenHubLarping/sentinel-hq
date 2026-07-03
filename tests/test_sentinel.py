@@ -759,3 +759,17 @@ def test_render_comment_superseded_is_calm_note():
     assert "intentionally superseded" in out
     assert "[!CAUTION]" not in out
     assert "/sentinel intentional" not in out.split("superseded")[0]  # no CTA table
+
+
+def test_linked_issue_numbers_from_snapshot(tmp_path, monkeypatch):
+    from sentinel.resolve import _linked_issue_numbers
+
+    snap = tmp_path / "snap.json"
+    snap.write_text(_json.dumps({
+        "prs": [{"number": 16, "title": "async email",
+                 "body": "Motivated by the incident in issue #8 — see also Issue #12."}],
+        "issues": [], "incoming": [],
+    }), encoding="utf-8")
+    monkeypatch.setenv("SENTINEL_API_SNAPSHOT", str(snap))
+    assert _linked_issue_numbers(16) == {8, 12}
+    assert _linked_issue_numbers(99) == set()
