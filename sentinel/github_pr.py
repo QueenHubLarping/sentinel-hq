@@ -93,6 +93,11 @@ def find_flagged_decision_text(number: int) -> str:
     comments = _api(f"/repos/{repo}/issues/{number}/comments?per_page=100") or []
     for c in reversed(comments):
         body = c.get("body", "")
+        # A maintainer's command comment ("/sentinel intentional — because ...") also
+        # contains the CTA marker; it is the TRIGGER, not the flag card — skip it, or a
+        # command with no PR number in its text shadows the real card below it.
+        if body.strip().lower().startswith("/sentinel"):
+            continue
         # The reliable marker across every Sentinel flag card (the Memory Review card and the
         # legacy reversal card both carry the CTA); also matches old "reverses a past" headlines.
         if "/sentinel intentional" in body or "Memory Review" in body or "reverses a past" in body:
