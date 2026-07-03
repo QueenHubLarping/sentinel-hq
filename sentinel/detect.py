@@ -82,6 +82,12 @@ class Verdict(BaseModel):
         description="(system-managed — always leave false) set by Sentinel when the team "
         "previously dismissed this drift via '/sentinel noise'.",
     )
+    superseded_intentionally: bool = Field(
+        default=False,
+        description="(system-managed — always leave false) set by Sentinel when the cited "
+        "decision was already retired via '/sentinel intentional' — the team consciously "
+        "superseded it, so a PR aligned with the new belief must not be flagged.",
+    )
     provenance_tier: str = Field(
         default="inferred",
         description="(system-managed — always leave as the default) the trust tier of the "
@@ -90,8 +96,10 @@ class Verdict(BaseModel):
 
     @property
     def should_flag(self) -> bool:
-        """Whether Sentinel actually surfaces this: a reversal the team hasn't muted."""
-        return self.reverses_decision and not self.suppressed_by_feedback
+        """Whether Sentinel actually surfaces this: a reversal the team hasn't muted
+        (👎 noise) or already ratified (intentional supersession)."""
+        return (self.reverses_decision and not self.suppressed_by_feedback
+                and not self.superseded_intentionally)
 
 
 _SYSTEM_PROMPT = """You are Sentinel, an institutional-memory guardian for a codebase.
@@ -253,14 +261,44 @@ async def detect_reversal(
         )
         verdict.confidence = round(0.5 + 0.15 * filled, 2)  # 0.65–0.95
 
+    # forget: retiring the decision document at ingest is not enough — the incident
+    # issue (rightly) stays in memory, and recall can still ground a reversal verdict on
+    # it. If ANY PR number the verdict cites (reference or evidence chain) is in the
+    # retired ledger, the team already ratified this supersession: stay silent. The
+    # judgment stays honest (reverses_decision unchanged); only surfacing is gated.
+    verdict.superseded_intentionally = False
+    if verdict.reverses_decision:
+        import re as _re
+
+        from sentinel.retired import retired_pr_numbers
+
+        cited = {
+            int(m) for m in _re.findall(
+                r"pr\s*[-#]?\s*(\d+)",
+                f"{verdict.decision_reference} {verdict.evidence_chain}",
+                _re.IGNORECASE,
+            )
+        }
+        verdict.superseded_intentionally = bool(cited & retired_pr_numbers())
+
     # improve: if the team previously dismissed this drift as noise ('/sentinel noise'),
     # the flag is muted. The judgment stays honest (reverses_decision is unchanged); we
     # only suppress surfacing it. Read live from the graph, so it changes the next run.
+    # Signatures are checked for the reference AND every PR the evidence chain cites —
+    # the LLM words the reference differently run to run.
     verdict.suppressed_by_feedback = False
-    if verdict.reverses_decision and verdict.decision_reference:
-        from sentinel.improve import is_dismissed
+    if verdict.reverses_decision and (verdict.decision_reference or verdict.evidence_chain):
+        from sentinel.improve import dismissed_signatures, feedback_signature
 
-        verdict.suppressed_by_feedback = await is_dismissed(verdict.decision_reference)
+        dismissed = await dismissed_signatures()
+        candidates = {feedback_signature(verdict.decision_reference)}
+        import re as _re
+
+        for m in _re.findall(r"pr\s*[-#]?\s*(\d+)",
+                             f"{verdict.decision_reference} {verdict.evidence_chain}",
+                             _re.IGNORECASE):
+            candidates.add(f"PR-{int(m)}")
+        verdict.suppressed_by_feedback = bool(candidates & dismissed)
 
     # Trust tier (minimal M9 / §8.1): only HUMAN-APPROVED memory drives a confident flag;
     # machine-INFERRED memory surfaces as a soft "possible" proposal. The tier is set here,

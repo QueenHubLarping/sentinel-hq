@@ -745,3 +745,17 @@ def test_chain_subgraph_from_verdict_fields():
     rels = {e["rel"] for e in edges}
     assert "reverses" in rels and "justified by" in rels
     assert chain_subgraph(Verdict(analysis="x", reverses_decision=False)) == ([], [])
+
+
+def test_should_flag_false_when_superseded_intentionally():
+    v = Verdict(analysis="x", reverses_decision=True,
+                decision_reference="PR #16 (async email)", superseded_intentionally=True)
+    assert v.should_flag is False
+
+
+def test_render_comment_superseded_is_calm_note():
+    v = _recap_verdict(superseded_intentionally=True)
+    out = render_comment(v)
+    assert "intentionally superseded" in out
+    assert "[!CAUTION]" not in out
+    assert "/sentinel intentional" not in out.split("superseded")[0]  # no CTA table

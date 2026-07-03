@@ -88,6 +88,8 @@ def render_comment(verdict: Verdict, graph_section: str = "") -> str:
     from sentinel.graph_viz) — shown inline so the reviewer SEES the typed, multi-hop
     decision graph (PR ↔ Issue ↔ Decision), not just a verdict.
     """
+    if verdict.reverses_decision and getattr(verdict, "superseded_intentionally", False):
+        return render_superseded(verdict)
     if verdict.reverses_decision and verdict.suppressed_by_feedback:
         return render_suppressed(verdict)
     if not verdict.reverses_decision:
@@ -280,6 +282,27 @@ def _render_inferred(verdict: Verdict, graph_section: str) -> str:
         _footer("proposes inferred learnings · asks before it asserts"),
     ]
     return "\n".join(lines)
+
+
+def render_superseded(verdict: Verdict) -> str:
+    """The calm note when the cited decision was already retired via '/sentinel intentional'.
+
+    The forget loop's other half: the team ratified this supersession, so a change aligned
+    with the NEW belief is not a reversal worth raising. Honest — Sentinel says what it
+    found and why it is staying quiet."""
+    ref = verdict.decision_reference or "a past learning"
+    return "\n".join([
+        "> [!NOTE]",
+        _header(verdict, "superseded — staying quiet"),
+        ">",
+        f"> This change relates to **{ref}**, which your team **intentionally superseded** "
+        "(`/sentinel intentional`). The old learning is retired; this PR is consistent with "
+        "the organization's current belief.",
+        "",
+        f"{_sentinel_badge()} ![superseded]({_badge('learning', 'superseded', '6e7781')})",
+        "",
+        _footer("forget loop · retired learnings stay retired"),
+    ])
 
 
 def render_suppressed(verdict: Verdict) -> str:
