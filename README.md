@@ -147,6 +147,16 @@ scripts/     action_entrypoint (the Action) · seed_demo_repo (create demo data 
              retired.json (durable forget ledger)
 ```
 
+## Roadmap — where this goes after the hackathon
+
+Deliberately *not* built this week (a working demo beats five half-features), in priority order:
+
+1. **Incremental ingestion** — diff-based `add()` on merge events instead of full snapshot replay, so memory grows with the repo at near-zero cost per PR.
+2. **Confidence-threshold gate** — a numeric floor under which low-confidence *inferred* flags don't surface at all (tune the noise budget per team).
+3. **First-class Capability & Assumption nodes** — today `affected_capability` and the assumption live on each verdict; promoting them to persistent graph nodes enables "show me every decision this PR's capability depends on."
+4. **Cross-repo memory** — one Cognee graph per *organization*: a decision made in the platform repo protecting a service repo.
+5. **Ask-the-graph interface (MCP)** — the same memory, queryable from your editor: "why is email async here?"
+
 ## Team & disclosure
 
 Built by **Chayan, Rudradeep, Abhijit** for the Cognee "Hangover Part AI" hackathon (Jun 29 – Jul 5, 2026), track: **Best Use of Open Source** (self-hosted Cognee 1.2.2).
