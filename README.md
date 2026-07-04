@@ -73,6 +73,15 @@ flowchart LR
 | `cognee.session.add_feedback(score=…)` → `cognee.improve(feedback_alpha=0.3)` | [`sentinel/improve.py`](sentinel/improve.py) | A maintainer 👎 nudges `feedback_weight` on the flag's own graph elements (gentle re-rank, not an erase) — Cognee's critic-guided reweighting used exactly as designed. |
 | Trust tiers via feedback weights | [`sentinel/trust.py`](sentinel/trust.py) | Human-approved beliefs drive confident flags; machine-inferred ones only *propose* — approval is the strongest positive feedback signal. |
 
+## What Sentinel catches — and what it doesn't
+
+Honest scope, so you know exactly what you're getting:
+
+- **It catches decision reversals, not bad code.** Sentinel is not a linter or a general review bot — it flags a PR only when the change contradicts a decision reconstructable from your merged-PR + issue history. Everything else stays silent by design.
+- **The rationale must exist somewhere in history.** Sentinel *connects* evidence (a merged PR, its linked incident issue, review discussion) — it never invents a "why" that was written nowhere. No recorded rationale → no confident flag. This guardrail is why the noise controls stay silent.
+- **The judge is an LLM, bounded by recall.** A decision absent from the graph can't be cited; subtle reversals can slip through (false negatives are possible). That's why flags carry a confidence score and a trust tier — human-approved beliefs drive confident flags, machine-inferred ones only propose — and why Sentinel is **advisory-only: it never blocks a merge**.
+- **Memory is per-repo and rebuilt from the snapshot each run** — no cross-repo memory, no incremental ingest yet (see the roadmap below).
+
 ## Run it on your repo
 
 ```yaml
@@ -123,7 +132,7 @@ python scripts/day4_improve.py   # 👎 → cognee.improve() → similar flag su
 python scripts/recap_demo.py     # Visual Memory Recap preview (offline, no LLM)
 python scripts/stress_test.py    # the full precision matrix → STRESS_REPORT.md
 
-pip install pytest && pytest tests/   # 61 pure-function tests, no network
+pip install pytest && pytest tests/   # 66 pure-function tests, no network
 ```
 
 ## Repo map
