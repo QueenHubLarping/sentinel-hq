@@ -102,3 +102,24 @@ Back to **PR #22**'s comment history, top to bottom:
 *inputs* (created through the GitHub API); every Sentinel *output* — comments, recaps, graph
 mutations, the behavior flip — was generated live by the Action. AI tools used: Claude Code
 (disclosed).
+
+---
+
+## Live Q&A runbook — surviving "can you run it right now?"
+
+**"Run it on a PR live."** Safest live trigger: close + reopen a PR that is *already in its
+final demo state* — **PR #26 or #27** (flagged, no lifecycle commands used on them). The Action
+re-runs in ~2–4 min and re-posts the same verdict. Do NOT close/reopen #22 (post-forget: silent
+is correct but confusing mid-Q&A without setup) or #23/#24 (improve-loop state).
+
+**"Run it on a *fresh* PR."** Say yes — open a small PR against `sentinel-test-repo` that
+reverses a remembered decision (e.g. re-add `@ratelimit` to a view). Expect ~2–4 min. If the
+projector moment can't absorb that wait, offer the stronger already-live proof: 12 timestamped
+Action runs, graded in STRESS_REPORT.md.
+
+**If a live run fails on stage** (rate limit / runner flake): open the Actions tab → "Re-run
+failed jobs". While it re-runs, narrate the existing PR comments — every beat of the story is
+already on the repo, timestamped. The demo never depends on a live run succeeding.
+
+**"How do I know the outputs aren't staged?"** Every comment/recap has an Action run linked;
+runs show the full log. Repos are public; the seed script (inputs only) is in the repo.
